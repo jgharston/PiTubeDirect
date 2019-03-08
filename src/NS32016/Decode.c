@@ -16,7 +16,7 @@ const uint8_t FormatSizes[FormatCount + 1] =
    1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1
 };
 
-#define FUNC(FORMAT, OFFSET) (((FORMAT) << 4) + (OFFSET)) 
+#define FUNC(FORMAT, OFFSET) (((FORMAT) << 4) + (OFFSET))
 
 uint8_t GetFunction(uint8_t FirstByte)
 {
@@ -90,13 +90,13 @@ void BreakPoint(uint32_t pc, uint32_t opcode)
    // Exec address of Bas32
    if (pc == 0x000200)
    {
-      printf("Entering Bas32\n");
+      log_debug("Entering Bas32");
       ProfileInit();
    }
    // Exec address of Panos
    if (pc == 0x000400)
    {
-      printf("Entering Panos\n");
+      log_debug("Entering Panos");
       ProfileInit();
    }
    // Address of SVC &11 (OS_EXIT)

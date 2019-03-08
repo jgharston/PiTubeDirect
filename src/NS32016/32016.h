@@ -1,3 +1,13 @@
+#include "../logging.h"
+
+/* A custom warning logger for n32016 that logs the PC */
+void n32016_warn(char * fmt, ...);
+
+#define PiTRACE(...) log_debug(__VA_ARGS__)
+
+#define PiWARN(...)  n32016_warn(__VA_ARGS__)
+
+
 // Some meaningful memory sizes
 #define K128      0x0020000
 #define K256      0x0040000
@@ -91,7 +101,7 @@ enum Operands
    FrameRelative,
    StackRelative,
    StaticRelative,
-   
+
    IllegalOperand,
    Immediate,
    Absolute,
@@ -221,7 +231,7 @@ typedef union
 //  7 F3:L
 //  8 F4:L F4:F
 //  9 F4:L F5:F
-// 10 F5:L 
+// 10 F5:L
 // 11 F5:L
 // 12 F6:L F6:F
 // 13 F6:L F7:F
@@ -242,7 +252,7 @@ typedef union
    uint64_t    u64;
    int64_t     s64;
 } Temp64Type;
-  
+
 typedef union
 {
    float       f32;
@@ -301,7 +311,7 @@ typedef union
       uint8_t UpperByte;
    };
 
-   uint16_t Whole;   
+   uint16_t Whole;
 } RegLKU;
 
 extern uint32_t sp[2];
@@ -326,12 +336,15 @@ enum StringBits
 };
 
 extern void n32016_init();
-extern void n32016_ShowRegs(int bShowFloat);
+extern void n32016_ShowRegs(int Option);
 extern void n32016_reset();
 extern void n32016_reset_addr(uint32_t StartAddress);
 extern void n32016_exec();
 extern void n32016_close();
 extern void n32016_build_matrix();
+extern uint32_t n32016_get_pc();
+extern uint32_t n32016_get_startpc();
+extern void n32016_set_pc(uint32_t value);
 extern void BreakPoint(uint32_t pc, uint32_t opcode);
 extern int32_t GetDisplacement(uint32_t* pPC);
 
@@ -339,20 +352,6 @@ extern ProcessorRegisters PR;
 extern uint32_t r[8];
 extern RegLKU Regs[2];
 extern OperandSizeType FredSize;
-
-extern void Disassemble(uint32_t Location, uint32_t End);
-
-#ifdef INSTRUCTION_PROFILING
-extern void DisassembleUsingITrace(uint32_t Location, uint32_t End);
-extern uint32_t IP[MEG16];
-#endif
-
-
-#ifdef SHOW_INSTRUCTIONS
-extern void ShowInstruction(uint32_t pc, uint32_t* pPC, uint32_t opcode, uint32_t Function, uint32_t OperandSize);
-#else
-#define ShowInstruction(...)
-#endif
 
 #if 1
 extern void ShowRegisterWrite(RegLKU RegIn, uint32_t Value);
@@ -364,20 +363,14 @@ extern void ShowRegisterWrite(RegLKU RegIn, uint32_t Value);
 extern void CloseTrace(void);
 #endif
 
-#ifdef TRACE_TO_FILE
-#define PiTRACE(...) fprintf(pTraceFile, __VA_ARGS__)
-extern FILE *pTraceFile;
-#elif defined(TRACE_TO_CONSOLE)
-#define PiTRACE printf
+extern int tubecycles;
+
+#ifdef BEM
+extern int tube_irq;
 #else
-#define PiTRACE(...)
+extern volatile int tube_irq;
 #endif
 
-#define PiWARN(...)  { printf("pc=%08"PRIX32": ",pc); printf(__VA_ARGS__); }
-
-extern uint32_t pc;
-extern int tubecycles;
-extern int tube_irq;
 extern uint32_t genaddr[2];
 extern int gentype[2];
 extern const uint8_t FormatSizes[FormatCount + 1];
@@ -389,7 +382,7 @@ extern const uint8_t FormatSizes[FormatCount + 1];
 #define PrintSP(str)
 #endif
 
-#define READ_PC_BYTE() read_x8(pc++) 
+#define READ_PC_BYTE() read_x8(pc++)
 
 #define SIGN_EXTEND(size, reg) \
   if ((size == sz8) && (reg & 0x80)) { \

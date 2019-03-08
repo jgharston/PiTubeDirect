@@ -80,6 +80,17 @@ unsigned char receiveByte(unsigned char reg)
 }
 
 // Reg is 1..4
+void sendStringWithoutTerminator(unsigned char reg, const volatile char *buf)
+{
+  unsigned char c;
+  while ((c = ((unsigned char)*buf)) >= 0x20)
+  {
+    sendByte(reg, c);
+    buf++;
+  }
+}
+
+// Reg is 1..4
 void sendString(unsigned char reg, unsigned char terminator, const volatile char *buf)
 {
   char c;
@@ -132,12 +143,9 @@ void receiveBlock(unsigned char reg, int len, unsigned char *buf)
 void sendWord(unsigned char reg, unsigned int word)
 {
   sendByte(reg, (unsigned char) (word >> 24));
-  word <<= 8;
-  sendByte(reg, (unsigned char) (word >> 24));
-  word <<= 8;
-  sendByte(reg, (unsigned char) (word >> 24));
-  word <<= 8;
-  sendByte(reg, (unsigned char) (word >> 24));
+  sendByte(reg, (unsigned char) (word >> 16));
+  sendByte(reg, (unsigned char) (word >> 8));
+  sendByte(reg, (unsigned char) (word ));
 }
 
 // Reg is 1..4

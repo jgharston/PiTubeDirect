@@ -21,14 +21,20 @@
 
 #include "mc6809.h"
 #include <stdarg.h>
+#include "../tube.h"
 
-unsigned X, Y, S, U, PC;
-unsigned A, B, DP;
-unsigned H, N, Z, OV, C;
-unsigned EFI;
+#ifdef INCLUDE_DEBUGGER
+#include "mc6809_debug.h"
+#include "../cpu_debug.h"
+#endif
+
+static unsigned X, Y, S, U, PC;
+static unsigned A, B, DP;
+static unsigned H, N, Z, OV, C;
+static unsigned EFI;
 
 #ifdef H6309
-unsigned E, F, V, MD;
+static unsigned E, F, V, MD;
 
 #define MD_NATIVE 0x1		/* if 1, execute in 6309 mode */
 #define MD_FIRQ_LIKE_IRQ 0x2	/* if 1, FIRQ acts like IRQ */
@@ -36,16 +42,16 @@ unsigned E, F, V, MD;
 #define MD_DBZ 0x80		/* divide by zero */
 #endif /* H6309 */
 
-unsigned iPC;
+static unsigned iPC;
 
-unsigned ea = 0;
-long cpu_clk = 0;
-long cpu_period = 0;
-unsigned int irqs_pending = 0;
-unsigned int firqs_pending = 0;
-unsigned int cc_changed = 0;
+static unsigned ea = 0;
+static long cpu_clk = 0;
+static long cpu_period = 0;
+static unsigned int irqs_pending = 0;
+static unsigned int firqs_pending = 0;
+static unsigned int cc_changed = 0;
 
-unsigned *index_regs[4] = { &X, &Y, &U, &S };
+static unsigned *index_regs[4] = { &X, &Y, &U, &S };
 
 static int sync_flag;
 
@@ -59,7 +65,7 @@ void mc6809nc_request_irq (unsigned int source)
 	 * IRQ immediately.  Else, mark it pending and
 	 * we'll check it later when the flags change.
 	 */
-	irqs_pending |= (1 << source);
+//	irqs_pending |= (1 << source);
    sync_flag = 0;
 	if (!(EFI & I_FLAG))
 		irq ();
@@ -76,7 +82,7 @@ void mc6809nc_request_firq (unsigned int source)
 	 * IRQ immediately.  Else, mark it pending and
 	 * we'll check it later when the flags change.
 	 */
-	firqs_pending |= (1 << source);
+	//firqs_pending |= (1 << source);
    sync_flag = 0;
 	if (!(EFI & F_FLAG))
 		firq ();
@@ -203,15 +209,15 @@ static void indexed (void)			/* note take 1 extra cycle */
 	  cpu_clk -= 4;
 	  break;
 	case 0x05:
-	  ea = (*R + ((INT8) B)) & 0xffff;
+	  ea = (*R + ((int8_t) B)) & 0xffff;
 	  cpu_clk -= 5;
 	  break;
 	case 0x06:
-	  ea = (*R + ((INT8) A)) & 0xffff;
+	  ea = (*R + ((int8_t) A)) & 0xffff;
 	  cpu_clk -= 5;
 	  break;
 	case 0x08:
-	  ea = (*R + ((INT8) imm_byte ())) & 0xffff;
+	  ea = (*R + ((int8_t) imm_byte ())) & 0xffff;
 	  cpu_clk -= 5;
 	  break;
 	case 0x09:
@@ -223,7 +229,7 @@ static void indexed (void)			/* note take 1 extra cycle */
 	  cpu_clk -= 8;
 	  break;
 	case 0x0c:
-	  ea = (INT8) imm_byte ();
+	  ea = (int8_t) imm_byte ();
 	  ea = (ea + PC) & 0xffff;
 	  cpu_clk -= 5;
 	  break;
@@ -254,19 +260,19 @@ static void indexed (void)			/* note take 1 extra cycle */
 	  cpu_clk -= 2;
 	  break;
 	case 0x15:
-	  ea = (*R + ((INT8) B)) & 0xffff;
+	  ea = (*R + ((int8_t) B)) & 0xffff;
 	  cpu_clk -= 5;
 	  ea = RDMEM16 (ea);
 	  cpu_clk -= 2;
 	  break;
 	case 0x16:
-	  ea = (*R + ((INT8) A)) & 0xffff;
+	  ea = (*R + ((int8_t) A)) & 0xffff;
 	  cpu_clk -= 5;
 	  ea = RDMEM16 (ea);
 	  cpu_clk -= 2;
 	  break;
 	case 0x18:
-	  ea = (*R + ((INT8) imm_byte ())) & 0xffff;
+	  ea = (*R + ((int8_t) imm_byte ())) & 0xffff;
 	  cpu_clk -= 5;
 	  ea = RDMEM16 (ea);
 	  cpu_clk -= 2;
@@ -284,7 +290,7 @@ static void indexed (void)			/* note take 1 extra cycle */
 	  cpu_clk -= 2;
 	  break;
 	case 0x1c:
-	  ea = (INT8) imm_byte ();
+	  ea = (int8_t) imm_byte ();
 	  ea = (ea + PC) & 0xffff;
 	  cpu_clk -= 5;
 	  ea = RDMEM16 (ea);
@@ -525,10 +531,10 @@ unsigned get_cc (void)
 void set_cc (unsigned arg)
 {
   EFI = arg & (E_FLAG | F_FLAG | I_FLAG);
-  H = (arg & H_FLAG ? 0x10 : 0);
-  N = (arg & N_FLAG ? 0x80 : 0);
+  H = ((arg & H_FLAG )? 0x10 : 0);
+  N = ((arg & N_FLAG )? 0x80 : 0);
   Z = (~arg) & Z_FLAG;
-  OV = (arg & V_FLAG ? 0x80 : 0);
+  OV = ((arg & V_FLAG) ? 0x80 : 0);
   C = arg & C_FLAG;
   cc_changed = 1;
 }
@@ -704,7 +710,7 @@ static unsigned asl (unsigned arg)		/* same as lsl */
 
 static unsigned asr (unsigned arg)
 {
-  unsigned res = (INT8) arg;
+  unsigned res = (int8_t) arg;
 
   C = res & 1;
   N = Z = res = (res >> 1) & 0xff;
@@ -764,7 +770,7 @@ static void daa (void)
     res += 0x60;
 
   C |= (res & 0x100);
-  A = N = Z = res &= 0xff;
+  A = N = Z = (res & 0xff);
   OV = 0;			/* fix this */
 
   cpu_clk -= 2;
@@ -1473,8 +1479,11 @@ static void cwai (void)
 
 static void sync (void)
 {
-  cpu_clk -= 4;
-  sync_flag = 1;
+  sync_flag = 1; 
+  do {
+    cpu_clk -= 4;
+    tubeUseCycles(0xFFFF);
+  } while (tubeContinueRunning());
 }
 
 static void orcc (void)
@@ -1512,7 +1521,7 @@ static void andcc (void)
 
 static void bra (void)
 {
-  INT8 tmp = (INT8) imm_byte ();
+  int8_t tmp = (int8_t) imm_byte ();
   change_pc (PC + tmp);
 }
 
@@ -1528,7 +1537,7 @@ static void branch (unsigned cond)
 
 static void long_bra (void)
 {
-  INT16 tmp = (INT16) imm_word ();
+  int16_t tmp = (int16_t) imm_word ();
   change_pc (PC + tmp);
 }
 
@@ -1548,7 +1557,7 @@ static void long_branch (unsigned cond)
 
 static void long_bsr (void)
 {
-  INT16 tmp = (INT16) imm_word ();
+  int16_t tmp = (int16_t) imm_word ();
   ea = PC + tmp;
   S = (S - 2) & 0xffff;
   write_stack16 (S, PC & 0xffff);
@@ -1558,7 +1567,7 @@ static void long_bsr (void)
 
 static void bsr (void)
 {
-  INT8 tmp = (INT8) imm_byte ();
+  int8_t tmp = (int8_t) imm_byte ();
   ea = PC + tmp;
   S = (S - 2) & 0xffff;
   write_stack16 (S, PC & 0xffff);
@@ -1567,11 +1576,11 @@ static void bsr (void)
 }
 
 /* Execute 6809 code for a certain number of cycles. */
-int mc6809nc_execute (int cycles)
+int mc6809nc_execute (int tube_cycles)
 {
   unsigned opcode;
 
-  cpu_period = cpu_clk = cycles;
+  cpu_period = cpu_clk = tube_cycles;
 
   if (sync_flag) {
      return cpu_period;
@@ -1581,6 +1590,14 @@ int mc6809nc_execute (int cycles)
     {
 
       iPC = PC;
+
+#ifdef INCLUDE_DEBUGGER
+      if (mc6809nc_debug_enabled)
+      {
+         debug_preexec(&mc6809nc_cpu_debug, PC);
+      }
+#endif
+
       opcode = imm_byte ();
 
       switch (opcode)
@@ -2931,8 +2948,10 @@ int mc6809nc_execute (int cycles)
 
 	if (cc_changed)
 	  cc_modified ();
-    }
-  while (cpu_clk > 0);
+      
+   tubeUseCycles(1);   
+  } while (tubeContinueRunning());
+  //while (cpu_clk > 0);
 
   cpu_period -= cpu_clk;
   cpu_clk = cpu_period;

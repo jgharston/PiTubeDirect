@@ -30,6 +30,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <inttypes.h>
 #include "darm.h"
 #include "darm-internal.h"
 #include "thumb-tbl.h"
@@ -38,12 +39,12 @@ POSSIBILITY OF SUCH DAMAGE.
 
 #define BITMSK_8 ((1 << 8) - 1)
 #define ROR(val, rotate) (((val) >> (rotate)) | ((val) << (32 - (rotate))))
-#define SIGN_EXTEND32(v, len) (((int32_t)(v) << (32 - len)) >> (32 - len))
+#define SIGN_EXTEND32(v, len) (((int32_t)(v) << (32 - (len))) >> (32 - (len)))
 
-void thumb2_parse_reg(darm_t *d, uint16_t w, uint16_t w2);
-void thumb2_parse_imm(darm_t *d, uint16_t w, uint16_t w2);
-void thumb2_parse_flag(darm_t *d, uint16_t w, uint16_t w2);
-void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2);
+static void thumb2_parse_reg(darm_t *d, uint16_t w, uint16_t w2);
+static void thumb2_parse_imm(darm_t *d, uint16_t w, uint16_t w2);
+static void thumb2_parse_flag(darm_t *d, uint16_t w, uint16_t w2);
+static void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2);
 
 // 12 -> 32 bit expansion function
 // See manual for this
@@ -112,7 +113,7 @@ void thumb2_decode_immshift(darm_t *d, uint8_t type, uint8_t imm5)
 }
 
 // Parse the register instruction type
-void thumb2_parse_reg(darm_t *d, uint16_t w, uint16_t w2)
+static void thumb2_parse_reg(darm_t *d, uint16_t w, uint16_t w2)
 {
     switch (d->instr_type) {
     case T_THUMB2_NO_REG:
@@ -203,7 +204,7 @@ void thumb2_parse_reg(darm_t *d, uint16_t w, uint16_t w2)
 }
 
 // Parse the immediate instruction type
-void thumb2_parse_imm(darm_t *d, uint16_t w, uint16_t w2)
+static void thumb2_parse_imm(darm_t *d, uint16_t w, uint16_t w2)
 {
     d->I = B_SET;
 
@@ -253,7 +254,7 @@ void thumb2_parse_imm(darm_t *d, uint16_t w, uint16_t w2)
 }
 
 // Parse the flag instruction type
-void thumb2_parse_flag(darm_t *d, uint16_t w, uint16_t w2)
+static void thumb2_parse_flag(darm_t *d, uint16_t w, uint16_t w2)
 {
     switch (d->instr_flag_type) {
     case T_THUMB2_NO_FLAG:
@@ -266,14 +267,14 @@ void thumb2_parse_flag(darm_t *d, uint16_t w, uint16_t w2)
 
     case T_THUMB2_U_FLAG:
         // U flag
-        d->U = (w >> 7) & 1 ? B_SET : B_UNSET;
+        d->U = ((w >> 7) & 1 ) ? B_SET : B_UNSET;
         break;
 
     case T_THUMB2_WUP_FLAG:
         // W, U and P flags
-        d->W = (w2 >> 8) & 1 ? B_SET : B_UNSET;
-        d->U = (w2 >> 9) & 1 ? B_SET : B_UNSET;
-        d->P = (w2 >> 10) & 1 ? B_SET : B_UNSET;
+        d->W = ((w2 >> 8) & 1 ) ? B_SET : B_UNSET;
+        d->U = ((w2 >> 9) & 1 ) ? B_SET : B_UNSET;
+        d->P = ((w2 >> 10) & 1 ) ? B_SET : B_UNSET;
         break;
 
     case T_THUMB2_TYPE_FLAG:
@@ -290,18 +291,18 @@ void thumb2_parse_flag(darm_t *d, uint16_t w, uint16_t w2)
     case T_THUMB2_WP_REGLIST_FLAG:
         // Reglist field and W, P flags
         d->reglist = w2 & 0xffff;
-        d->W = (w >> 5) & 1 ? B_SET : B_UNSET;
+        d->W = ((w >> 5) & 1 ) ? B_SET : B_UNSET;
         //d->P = (w >> 15) & 1 ? B_SET : B_UNSET;
         break;
 
     case T_THUMB2_S_FLAG:
         // S flag
-        d->S = (w >> 4) & 1 ? B_SET : B_UNSET;
+        d->S = ((w >> 4) & 1 ) ? B_SET : B_UNSET;
         break;
 
     case T_THUMB2_S_TYPE_FLAG:
         // S flag and type field
-        d->S = (w >> 4) & 1 ? B_SET : B_UNSET;
+        d->S = ((w >> 4) & 1 ) ? B_SET : B_UNSET;
         thumb2_decode_immshift(d, (w2 >> 4) & 3, d->imm);
         break;
 
@@ -316,7 +317,7 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
     switch (d->instr) {
     case I_B:
         d->I = B_SET;
-        d->S = (w >> 10) & 1 ? B_SET : B_UNSET;
+        d->S = ((w >> 10) & 1 ) ? B_SET : B_UNSET;
         if ((w2 & 0x1000) == 0) {
             // T3
             // sign_extend(S:J2:J1:imm6:imm11:0, 32)
@@ -346,7 +347,7 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
 
     case I_BL: case I_BLX:
         d->I = B_SET;
-        d->S = (w >> 10) & 1 ? B_SET : B_UNSET;
+        d->S = ((w >> 10) & 1 ) ? B_SET : B_UNSET;
         if ((w2 & 0x1000) == 0) {
             // BLX
             // I1 = not(J1 xor S); I2 = not(J2 xor S); imm32 = sign_extend(S:I1:I2:imm10H:imm10L:00, 32)
@@ -411,10 +412,10 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
     // co-proc load/store memory
     case I_LDC: case I_LDC2:
     case I_STC: case I_STC2:
-        d->P = (w >> 8) & 1 ? B_SET : B_UNSET;
-        d->U = (w >> 7) & 1 ? B_SET : B_UNSET;
-        d->D = (w >> 6) & 1 ? B_SET : B_UNSET;
-        d->W = (w >> 5) & 1 ? B_SET : B_UNSET;
+        d->P = ((w >> 8) & 1 ) ? B_SET : B_UNSET;
+        d->U = ((w >> 7) & 1 ) ? B_SET : B_UNSET;
+        d->D = ((w >> 6) & 1 ) ? B_SET : B_UNSET;
+        d->W = ((w >> 5) & 1 ) ? B_SET : B_UNSET;
 
         // literal or immediate
         d->Rn = (w & b1111) == b1111 ? R_INVLD : (w & b1111);
@@ -434,9 +435,9 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
     // zero-extend corner case with '00' appended
     case I_LDRD: case I_LDREX: case I_STRD:
         d->imm = (w2 & 0xff) << 2;
-        d->W = (w >> 5) & 1 ? B_SET : B_UNSET;
-        d->U = (w >> 7) & 1 ? B_SET : B_UNSET;
-        d->P = (w >> 8) & 1 ? B_SET : B_UNSET;
+        d->W = ((w >> 5) & 1 ) ? B_SET : B_UNSET;
+        d->U = ((w >> 7) & 1 ) ? B_SET : B_UNSET;
+        d->P = ((w >> 8) & 1 ) ? B_SET : B_UNSET;
         break;
 
     // Catch some pop/push inconsistencies
@@ -448,10 +449,10 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
 
         // P flag
         if(w == 0xe8bd) {
-            d->P = (w2 >> 15) & 1 ? B_SET : B_UNSET;
+            d->P = ((w2 >> 15) & 1 ) ? B_SET : B_UNSET;
         }
 
-        d->M = (w2 >> 14) & 1 ? B_SET : B_UNSET;
+        d->M = ((w2 >> 14) & 1 ) ? B_SET : B_UNSET;
         break;
 
     // co-processor move
@@ -506,7 +507,7 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
             d->imm = w2 & 0xfff;
             d->shift_type = S_INVLD;
             d->shift = 0;
-            d->U = (w >> 7) & 1 ? B_SET : B_UNSET;
+            d->U = ((w >> 7) & 1 ) ? B_SET : B_UNSET;
         }
         d->W = (w & b1111) != b1111 ? ((w >> 5) & 1) : B_INVLD;
         break;
@@ -519,13 +520,13 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
     // N, M flags
     case I_SMLABB: case I_SMLABT: case I_SMLATB: case I_SMLATT:
     case I_SMULBB: case I_SMULBT: case I_SMULTB: case I_SMULTT:
-        d->N = (w2 >> 5) & 1 ? B_SET : B_UNSET;
+        d->N = ((w2 >> 5) & 1 ) ? B_SET : B_UNSET;
         // fall-through
 
     case I_SMLAD: case I_SMLAW:
     case I_SMLSD: case I_SMUAD:
     case I_SMULW: case I_SMUSD:
-        d->M = (w2 >> 4) & 1 ? B_SET : B_UNSET;
+        d->M = ((w2 >> 4) & 1 ) ? B_SET : B_UNSET;
         if(d->Ra == b1111) {
             d->Ra = R_INVLD;
         }
@@ -533,11 +534,11 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
 
     // N, M, Rdhi, Rdlo flags
     case I_SMLALBB: case I_SMLALBT: case I_SMLALTB: case I_SMLALTT:
-        d->N = (w2 >> 5) & 1 ? B_SET : B_UNSET;
+        d->N = ((w2 >> 5) & 1 ) ? B_SET : B_UNSET;
         // fall-through
 
     case I_SMLSLD: case I_SMLALD:
-        d->M = (w2 >> 4) & 1 ? B_SET : B_UNSET;
+        d->M = ((w2 >> 4) & 1 ) ? B_SET : B_UNSET;
         // fall-through
 
     case I_SMLAL: case I_SMULL:
@@ -547,7 +548,7 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
         break;
 
     case I_SMMLA: case I_SMMLS: case I_SMMUL:
-        d->R = (w2 >> 4) & 1 ? B_SET : B_UNSET;
+        d->R = ((w2 >> 4) & 1 ) ? B_SET : B_UNSET;
         break;
 
     case I_SSAT: case I_USAT:
@@ -560,12 +561,12 @@ void thumb2_parse_misc(darm_t *d, uint16_t w, uint16_t w2)
         break;
 
     case I_STM: case I_STMDB:
-        d->W = (w >> 5) & 1 ? B_SET : B_UNSET;
-        d->M = (w2 >> 14) & 1 ? B_SET : B_UNSET;
+        d->W = ((w >> 5) & 1 ) ? B_SET : B_UNSET;
+        d->M = ((w2 >> 14) & 1) ? B_SET : B_UNSET;
         break;
 
     case I_TBB: case I_TBH:
-        d->H = (w2 >> 4) & 1 ? B_SET : B_UNSET;
+        d->H = ((w2 >> 4) & 1) ? B_SET : B_UNSET;
         break;
 
     default:
@@ -588,12 +589,13 @@ static int thumb2_disasm(darm_t *d, uint16_t w, uint16_t w2)
     return 0;
 }
 
+#if 0
 // placeholder function for printing out thumb2 instructions
 // This is here until the format string problem is resolved
 // TODO: This lacks a lot of functionality, for debug only, replace with better function
-char *darm_thumb2_str(darm_t *d)
+static char *darm_thumb2_str(const darm_t *d)
 {
-    int i, index=0, offset=0;
+    int i, index=0, offset;
     static char stringbuf[512];
 
     for (i = 0; i < THUMB2_INSTRUCTION_COUNT; i++) {
@@ -603,7 +605,7 @@ char *darm_thumb2_str(darm_t *d)
         }
     }
 
-    offset += sprintf(stringbuf + offset, "%s",
+    offset = sprintf(stringbuf, "%s",
         thumb2_instruction_strings[index]);
 
     if(d->Rd != R_INVLD) {
@@ -627,11 +629,12 @@ char *darm_thumb2_str(darm_t *d)
     }
 
     if(d->I == B_SET) {
-        offset += sprintf(stringbuf+offset, "#0x%lx", d->imm);
+        sprintf(stringbuf+offset, "#0x%"PRIx32, d->imm);
     }
 
     return stringbuf;
 }
+#endif
 
 int darm_thumb2_disasm(darm_t *d, uint16_t w, uint16_t w2)
 {

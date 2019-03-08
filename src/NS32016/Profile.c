@@ -7,8 +7,6 @@
 #include "Decode.h"
 #include "mem32016.h"
 #include "defs.h"
-//#include "Trap.h"
-#include "NDis.h"
 #include "Profile.h"
 
 #ifdef PROFILING
@@ -50,7 +48,7 @@ uint16_t processOperand(uint16_t operand)
    {
       return 0; // --none--
    }
-   else if (operand >= 0 && operand <= 7)
+   else if (                operand <= 7)
    {
       return 2; // RN
    }

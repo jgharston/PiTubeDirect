@@ -7,7 +7,13 @@ static char cmdline[PROP_SIZE];
 
 static char info_string[PROP_SIZE];
 
-void print_tag_value(char *name, rpi_mailbox_property_t *buf, int hex) {
+extern void init_info() {
+  get_speed();
+  get_info_string();
+  get_cmdline();
+}
+
+void print_tag_value(char *name, const rpi_mailbox_property_t *buf, int hex) {
    int i;
    LOG_INFO("%20s : ", name);
    if (buf == NULL) {
@@ -80,6 +86,14 @@ float get_voltage(int component_id) {
 // Speed
 // Temp
 
+int get_speed() {
+   static int speed = 0;
+   if (!speed) {
+     speed = get_clock_rate(ARM_CLK_ID) / 1000000;
+   }
+   return speed;
+}
+
 char *get_info_string() {
    static int read = 0;
    if (!read) {
@@ -117,7 +131,7 @@ char *get_cmdline_prop(char *prop) {
    int proplen = strlen(prop);
 
    // continue until the end terminator
-   while (cmdptr && *cmdptr) {      
+   while (cmdptr && *cmdptr) {
       // compare the property name
       if (strncasecmp(cmdptr, prop, proplen) == 0) {
          // check for an equals in the expected place
@@ -133,7 +147,7 @@ char *get_cmdline_prop(char *prop) {
          }
       }
       // Skip to the next property
-      cmdptr = index(cmdptr, ' ');
+      cmdptr = strchr(cmdptr, ' ');
       while (cmdptr && *cmdptr == ' ') {
          cmdptr++;
       }
@@ -211,6 +225,11 @@ void dump_useful_info() {
    };
 
    int n = sizeof(tags) / sizeof(rpi_mailbox_tag_t);
+   LOG_INFO("\r\n"); // put some new lines in the serial stream as we don't know what is currently on the terminal
+   LOG_INFO("\r\n");
+   LOG_INFO("**********     Raspberry Pi BBC Micro Coprocessor     **********\r\n");
+   LOG_INFO("\r\n");
+   LOG_INFO("\r\n");
 
    RPI_PropertyInit();
    for (i = 0; i < n ; i++) {
@@ -218,7 +237,7 @@ void dump_useful_info() {
    }
 
    RPI_PropertyProcess();
-   
+
    for (i = 0; i < n; i++) {
       buf = RPI_PropertyGet(tags[i]);
       print_tag_value(tagnames[i], buf, 1);
@@ -241,7 +260,10 @@ void dump_useful_info() {
    LOG_INFO("     SDRAM_I VOLTAGE : %6.2f V\r\n", get_voltage(COMPONENT_SDRAM_I));
 
    LOG_INFO("            CMD_LINE : %s\r\n", get_cmdline());
-
-   LOG_INFO("               COPRO : %s\r\n", get_cmdline_prop("copro"));
+   char *cs ;
+   cs = get_cmdline_prop("copro");
+   if (!cs)
+      cs = "0 (default)";
+   LOG_INFO("               COPRO : %s\r\n", cs);
 
 }

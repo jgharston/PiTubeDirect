@@ -8,7 +8,7 @@ NAME=PiTubeDirect_$(date +"%Y%m%d_%H%M")_$USER
 DIR=releases/${NAME}
 mkdir -p ${DIR}/debug
 
-for MODEL in rpi3 rpi2 rpi rpibplus rpizero 
+for MODEL in rpi3 rpi2 rpi
 do    
     # compile normal kernel
     ./clobber.sh
@@ -28,13 +28,13 @@ cp -a firmware/* ${DIR}
 cat >${DIR}/README.txt <<EOF
 PiTubeDirect
 
-(c) 2017 David Banks (hoglet)
+(c) 2017 David Banks (hoglet), Dominic Plunkett (dp11), Ed Spittles (BigEd) and other contributors
 
   git version: $(grep GITVERSION gitversion.h  | cut -d\" -f2)
 build version: ${NAME}
 EOF
 
-cp config.txt ${DIR}/config.txt
+cp config.txt cmdline.txt ${DIR}
 cd releases/${NAME}
 zip -qr ../${NAME}.zip .
 cd ../..

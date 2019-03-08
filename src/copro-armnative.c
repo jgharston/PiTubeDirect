@@ -41,6 +41,7 @@
 #include "rpi-interrupts.h"
 #include "rpi-systimer.h"
 
+#include "info.h"
 #include "startup.h"
 #include "swi.h"
 #include "tube.h"
@@ -62,7 +63,7 @@ static Environment_type defaultEnvironment;
 
 static ErrorBuffer_type defaultErrorBuffer;
 
-static const char *banner = "ARM1176 Co Processor 1000MHz\r\n\n";
+static char banner[80];
 
 static const char *prompt = "arm>*";
 
@@ -73,7 +74,7 @@ Environment_type *env = &defaultEnvironment;
  ***********************************************************/
 
 // Note: this will be executed in user mode
-static void defaultErrorHandler(ErrorBuffer_type *eb) {
+static void defaultErrorHandler(const ErrorBuffer_type *eb) {
   // TODO: Consider resetting the user stack?
   if (DEBUG_ARM) {
     printf("Error = %p %02x %s\r\n", eb->errorAddr, eb->errorBlock.errorNum, eb->errorBlock.errorMsg);
@@ -191,8 +192,8 @@ static void initEnv() {
   env->handler[                 UPCALL_HANDLER].handler = defaultUpcallHandler;
 
   // Handlers where the handler is just data
-  env->handler[           MEMORY_LIMIT_HANDLER].handler = (EnvironmentHandler_type) (2 * 1024 * 1024);
-  env->handler[      APPLICATION_SPACE_HANDLER].handler = (EnvironmentHandler_type) (3 * 1024 * 1024);
+  env->handler[           MEMORY_LIMIT_HANDLER].handler = (EnvironmentHandler_type) (16 * 1024 * 1024);
+  env->handler[      APPLICATION_SPACE_HANDLER].handler = (EnvironmentHandler_type) (16 * 1024 * 1024);
   env->handler[CURRENTLY_ACTIVE_OBJECT_HANDLER].handler = (EnvironmentHandler_type) (0);
 }
 
@@ -294,6 +295,9 @@ void copro_armnative_emulator() {
     // Allow another copro to be selected
     return;
   }
+
+  // Create the startup banner
+  sprintf(banner, "Native ARM Co Processor %dMHz\r\n\n", get_speed());
 
   // Initialize the environment structure
   initEnv();
