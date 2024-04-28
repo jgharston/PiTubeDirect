@@ -48,15 +48,15 @@ uint16_t processOperand(uint16_t operand)
    {
       return 0; // --none--
    }
-   else if (                operand <= 7)
+   else if ( operand <= 7)
    {
       return 2; // RN
    }
-   else if (operand >= 8 && operand <= 15)
+   else if ( operand <= 15)
    {
       return 3; // disp(RN)
    }
-   else if (operand >= 16 && operand <= 27)
+   else if ( operand <= 27)
    {
       return operand - 12; // everything else
    }
@@ -83,14 +83,13 @@ void ProfileAdd(uint32_t Function, uint16_t Regs0, uint16_t Regs1)
 char *operandText(uint16_t Reg)
 {
    static char result[80];
-   static char mode[4] = "BWDQ";
    if (Reg < 16)
    {
       sprintf(result, "%s", operandStrings[Reg]);
    }
    else
    {
-      sprintf(result, "%s[Rn:%c]", operandStrings[Reg & 15], mode[(Reg >> 4) - 1]);
+      sprintf(result, "%s[Rn:%c]", operandStrings[Reg & 15], "BWDQ"[(Reg >> 4) - 1]);
    }
    return result;
 }

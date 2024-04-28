@@ -11,159 +11,131 @@
 #include "performance.h"
 #include "info.h"
 #include "rpi-gpio.h"
+#include "rpi-interrupts.h"
+#include "framebuffer/framebuffer.h"
 
 #ifdef INCLUDE_DEBUGGER
 #include "cpu_debug.h"
 #endif
 
-typedef void (*func_ptr)();
+#include "copro-defs.h"
 
-extern int test_pin;
-
-#include "copro-65tube.h"
-
-#ifdef MINIMAL_BUILD
-
-#ifdef DEBUG
-static const char * emulator_names[] = {
-   "65C02 (65tube)"
-};
-#endif
-
-static const func_ptr emulator_functions[] = {
-   copro_65tube_emulator
-};
-
-#else
-
-#include "copro-lib6502.h"
-#include "copro-80186.h"
-#include "copro-arm2.h"
-#include "copro-32016.h"
-#include "copro-null.h"
-#include "copro-z80.h"
-#include "copro-mc6809nc.h"
-#include "copro-opc5ls.h"
-#include "copro-opc6.h"
-#include "copro-opc7.h"
-#include "copro-pdp11.h"
 #include "copro-armnative.h"
 
-#ifdef DEBUG
-static const char * emulator_names[] = {
-   "65C02 (65tube)",
-   "65C02 (65tube)",
-   "65C02 (lib6502)",
-   "65C02 (lib6502)",
-   "Z80",
-   "OPC5LS",
-   "OPC6",
-   "OPC7",
-   "80286",
-   "MC6809",
-   "Null",
-   "PDP-11",
-   "ARM2",
-   "32016",
-   "Null",
-   "ARM Native"
-};
-#endif
-
-static const func_ptr emulator_functions[] = {
-   copro_65tube_emulator,
-   copro_65tube_emulator,
-#if 1   
-   copro_lib6502_emulator,
-   copro_lib6502_emulator,
-#else
-   copro_65tube_emulator,
-   copro_65tube_emulator,
-#endif
-   copro_z80_emulator,
-   copro_opc5ls_emulator,
-   copro_opc6_emulator,
-   copro_opc7_emulator,
-   copro_80186_emulator,
-   copro_mc6809nc_emulator,
-   copro_null_emulator,
-   copro_pdp11_emulator,
-   copro_arm2_emulator,
-   copro_32016_emulator,
-   copro_null_emulator,
-   copro_armnative_emulator
-};
-
-#endif
+extern int test_pin;
 
 volatile unsigned int copro;
 volatile unsigned int copro_speed;
 volatile unsigned int copro_memory_size = 0;
 unsigned int tube_delay = 0;
 
-int arm_speed;
+unsigned int arm_speed;
 
-static func_ptr emulator;
+static copro_def_t *copro_def;
 
-// This magic number come form cache.c where we have relocated the vectors to 
+// This magic number come form cache.c where we have relocated the vectors to
 // Might be better to just read the vector pointer register instead.
-#define SWI_VECTOR (HIGH_VECTORS_BASE + 0x28)
-#define FIQ_VECTOR (HIGH_VECTORS_BASE + 0x3C)
+#define SWI_VECTOR ( _software_interrupt_vector_h)
+#define FIQ_VECTOR ( _fast_interrupt_vector_h)
 
-unsigned char * copro_mem_reset(int length)
+unsigned char * copro_mem_reset(unsigned int length)
 {
      // Wipe memory
      // Memory starts at zero now vectors have moved.
-   unsigned char * mpu_memory = 0;  
-#pragma GCC diagnostic ignored "-Wnonnull"   
+   unsigned char * mpu_memory = 0;
+#pragma GCC diagnostic ignored "-Wnonnull"
      // cppcheck-suppress nullPointer
    memset(mpu_memory, 0, length);
-#pragma GCC diagnostic pop   
+#pragma GCC diagnostic pop
    // return pointer to memory
    return mpu_memory;
 }
 
-void init_emulator() {
+void copro_memcpy(unsigned char * dst,unsigned char * src,unsigned int length)
+{
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow="
+   memcpy(dst, src, length);
+#pragma GCC diagnostic pop
+}
+
+static void init_emulator() {
    _disable_interrupts();
-   
-      // Set up FIQ handler 
-   
-   tube_irq = 0; // Make sure everything is clear
-   *((uint32_t *) FIQ_VECTOR) = (uint32_t) arm_fiq_handler_flag1;
-   
+
+   // Make sure that copro number is valid
+   if (copro >= num_copros()) {
+      LOG_DEBUG("using default co pro\r\n");
+      copro = default_copro();
+   }
+
+   // Lookup the copro definition struct
+   copro_def = &copro_defs[copro];
+
+   LOG_DEBUG("Raspberry Pi Direct %u %s Client\r\n", copro, copro_def->name);
+
+   // Clear all old interrupts, and set tube_enable appropriately
+   if (copro_def->type == TYPE_HIDDEN || copro_def->type == TYPE_DISABLED) {
+      tube_irq = 0;
+   } else {
+      tube_irq = TUBE_ENABLE_BIT;
+   }
+
+   // Set up FIQ handler
+
+   FIQ_VECTOR = (uint32_t) arm_fiq_handler_flag1;
+   _data_memory_barrier();
+
+#ifdef USE_DOORBELL
+   // Direct Doorbell to FIQ handler
+
+#if defined(RPI4)
+   RPI_GetIrqController()->Enable_Basic_FIQs = RPI_BASIC_ARM_DOORBELL_1_IRQ;
+#else
+   RPI_GetIrqController()->FIQ_control = 0x80 + 67;
+#endif
+
+#else
    // Direct Mail box to FIQ handler
-   
    (*(volatile uint32_t *)MBOX0_CONFIG) = MBOX0_DATAIRQEN;
-   (*(volatile uint32_t *)FIQCTRL) = 0x80 +65;       
-   
+   _data_memory_barrier();
+
+#if defined(RPI4)
+   RPI_GetIrqController()->Enable_Basic_FIQs = RPI_BASIC_ARM_MAILBOX_IRQ;
+#else
+   RPI_GetIrqController()->FIQ_control = 0x80 + 65;
+#endif
+
+#endif
+
+   _data_memory_barrier();
 
 #ifndef MINIMAL_BUILD
-   if (copro == COPRO_ARMNATIVE) {
-      *((uint32_t *) SWI_VECTOR) = (uint32_t) copro_armnative_swi_handler;
-      *((uint32_t *) FIQ_VECTOR) = (uint32_t) copro_armnative_fiq_handler;
+   if (copro_def->type == TYPE_ARMNATIVE) {
+      SWI_VECTOR = (uint32_t) copro_armnative_swi_handler;
+      FIQ_VECTOR = (uint32_t) copro_armnative_fiq_handler;
    }
 #endif
 
-   copro &= 127 ; // Clear top bit which is used to signal full reset 
-   // Make sure that copro number is valid
-   if (copro >= sizeof(emulator_functions) / sizeof(func_ptr)) {
-      LOG_DEBUG("using default co pro\r\n");
-      copro = DEFAULT_COPRO;
-   }
-
-   LOG_DEBUG("Raspberry Pi Direct %u %s Client\r\n", copro,emulator_names[copro]);
-
-   emulator = emulator_functions[copro];
 
 #ifdef INCLUDE_DEBUGGER
    // reinitialize the debugger as the Co Pro has changed
    debug_init();
 #endif
-   
+
    _enable_interrupts();
+
+   if (vdu_enabled) {
+      fb_show_splash_screen();
+   }
 }
 
 #ifdef HAS_MULTICORE
+
+#if 0
+
+// DMB: This method is no longer ever called, because we only
+// ever run the emulation on the main core.
+
 void run_core() {
    // Write first line without using printf
    // In case the VFP unit is not enabled
@@ -178,23 +150,24 @@ void run_core() {
    RPI_AuxMiniUartWrite('\r');
    RPI_AuxMiniUartWrite('\n');
 #endif
-   
+
    enable_MMU_and_IDCaches();
    _enable_unaligned_access();
 
-#ifdef DEBUG   
+#ifdef DEBUG
    LOG_DEBUG("emulator running on core %d\r\n", i);
 #endif
 
    do {
       // Run the emulator
-      emulator();
+      copro_def->emulator(copro_def->type);
 
       // Reload the emulator as copro may have changed
       init_emulator();
-     
+
    } while (1);
 }
+#endif
 
 static void start_core(int core, func_ptr func) {
    LOG_DEBUG("starting core %d\r\n", core);
@@ -202,41 +175,60 @@ static void start_core(int core, func_ptr func) {
 }
 #endif
 
-
 static unsigned int get_copro_number() {
-   unsigned int copro = DEFAULT_COPRO;
+   unsigned int coproc = default_copro();
    char *copro_prop = get_cmdline_prop("copro");
-   
+
    if (copro_prop) {
-      copro = atoi(copro_prop);
+      coproc = (unsigned int) atoi(copro_prop);
    }
-   if (copro >= sizeof(emulator_functions) / sizeof(func_ptr)){
-      copro = DEFAULT_COPRO;
+   if (coproc >= num_copros()) {
+      coproc = default_copro();
    }
-   return copro;
+   return coproc;
+}
+
+unsigned int get_copro_mhz(unsigned int copro_num) {
+   unsigned int copro_mhz = 0; // default
+   char *copro_prop = NULL;
+   // Note: Co Pro Speed is only implemented in the 65tube Co Processors (copros 0/1/2/3)
+   if (copro_defs[copro_num].type == TYPE_65TUBE_1) {
+      copro_mhz = 3; // default to 3MHz (65C02)
+      copro_prop = get_cmdline_prop("copro1_speed");
+   } else if (copro_defs[copro_num].type == TYPE_65TUBE_3) {
+      copro_mhz = 4; // default to 4MHz (65C102)
+      copro_prop = get_cmdline_prop("copro3_speed");
+   }
+   if (copro_prop) {
+      copro_mhz = (uint32_t) atoi(copro_prop);
+   }
+   if (copro_mhz > 255) {
+      copro_mhz = 0;
+   }
+   return copro_mhz;
 }
 
 static void get_copro_speed() {
-   char *copro_prop = get_cmdline_prop("copro1_speed");
-   copro_speed = 3; // default to 3MHz 
-   if (copro_prop) {
-      copro_speed = atoi(copro_prop);
-   }
-   if (copro_speed > 255){
-      copro_speed = 0;
-   }
+   copro_speed = get_copro_mhz(copro);
    LOG_DEBUG("emulator speed %u\r\n", copro_speed);
-   if (copro_speed !=0)
-      copro_speed = (arm_speed/(1000000/256) / copro_speed);
+   if (copro_speed !=0) {
+      copro_speed = (arm_speed / (1000000 / 256) / copro_speed);
+   }
 }
 
 static void get_copro_memory_size() {
-   char *copro_prop = get_cmdline_prop("copro13_memory_size");
-   copro_memory_size = 0; // default 
-   if (copro_prop) {
-      copro_memory_size = atoi(copro_prop);
+   char *copro_prop = NULL;
+   copro_memory_size = 0; // default
+   // Note: Co Pro Memory Size is only implemented in the 80286 and 32016 Coprocessors (copros 8/13)
+   if (copro_def->type == TYPE_80X86) {
+      copro_prop = get_cmdline_prop("copro8_memory_size");
+   } else if (copro_def->type == TYPE_32016) {
+      copro_prop = get_cmdline_prop("copro13_memory_size");
    }
-   if (copro_memory_size > 32*1024 *1024){
+   if (copro_prop) {
+      copro_memory_size = (uint32_t)atoi(copro_prop);
+   }
+   if (copro_memory_size > 32*1024*1024) {
       copro_memory_size = 0;
    }
    LOG_DEBUG("Copro Memory size %u\r\n", copro_memory_size);
@@ -244,9 +236,9 @@ static void get_copro_memory_size() {
 
 static void get_tube_delay() {
    char *copro_prop = get_cmdline_prop("tube_delay");
-   tube_delay = 0; // default 
+   tube_delay = 0; // default
    if (copro_prop) {
-      tube_delay = atoi(copro_prop);
+      tube_delay = (uint32_t)atoi(copro_prop);
    }
    if (tube_delay > 40){
       tube_delay = 40;
@@ -256,6 +248,8 @@ static void get_tube_delay() {
 
 void kernel_main(unsigned int r0, unsigned int r1, unsigned int atags)
 {
+   unsigned int last_copro;
+
      // Initialise the UART to 57600 baud
    RPI_AuxMiniUartInit( 115200, 8 );
    enable_MMU_and_IDCaches();
@@ -264,13 +258,9 @@ void kernel_main(unsigned int r0, unsigned int r1, unsigned int atags)
 
    arm_speed = get_clock_rate(ARM_CLK_ID);
    get_tube_delay();
-   start_vc_ula();
 
    copro = get_copro_number();
-   get_copro_speed();
-   get_copro_memory_size();
-   
-   
+   last_copro = copro +1; // force new core
 #ifdef BENCHMARK
   // Run a short set of CPU and Memory benchmarks
   benchmark();
@@ -287,12 +277,24 @@ void kernel_main(unsigned int r0, unsigned int r1, unsigned int atags)
   RPI_GpioBase->GPSET0 = (1 << test_pin);
 
   do {
+
+     // When changing Co Processors, reset the Co Pro speed and memory back to the
+     // configured default for that Co Pro.
+     if (copro != last_copro) {
+        get_copro_speed();
+        get_copro_memory_size();
+     }
+     last_copro = copro;
+
      // Run the emulator
-     emulator();
+     copro_def->emulator(copro_def->type);
+
+     // Clear top bit which is used to signal full reset
+     copro &= 127;
 
      // Reload the emulator as copro may have changed
      init_emulator();
-     
+
   } while (1);
-  
+
 }

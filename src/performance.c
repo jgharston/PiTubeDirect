@@ -4,9 +4,9 @@
 #include "startup.h"
 #include "performance.h"
 
-#if defined(RPI3)
+#if defined(RPI3) || defined(RPI4)
 
-const char * type_names[] = {
+static const char * type_names[] = {
 
    "SW_INCR",
    "L1I_CACHE_REFILL",
@@ -44,7 +44,7 @@ const char * type_names[] = {
 
 #elif defined(RPI2)
 
-const char * type_names[] = {
+static const char * type_names[] = {
    "TODO",
    "TODO",
    "TODO",
@@ -81,7 +81,7 @@ const char * type_names[] = {
 
 #else
 
-const char * type_names[] = {
+static const char * type_names[] = {
    "I_CACHE_MISS",
    "IBUF_STALL",
    "DATA_DEP_STALL",
@@ -124,13 +124,12 @@ const char * type_names[] = {
 
 #endif
 
-const char *type_lookup(int type) {
-   static const char *UNKNOWN = "UNKNOWN";
+static const char *type_lookup(int type) {
    int num_types = sizeof(type_names) / sizeof(type_names[0]);
-   if (type >= 0 || type < num_types) {
+   if (type >= 0 && type < num_types) {
       return type_names[type];
    } else {
-      return UNKNOWN;
+      return "UNKNOWN";
    }
 }
 
@@ -142,9 +141,9 @@ void reset_performance_counters(perf_counters_t *pct) {
    // bit 1 = 1 means reset counters to zero
    // bit 0 = 1 enable counters
    unsigned ctrl = 0x0F;
-   
 
-#if defined(RPI2) || defined(RPI3)
+
+#if defined(RPI2) || defined(RPI3) || defined(RPI4)
    int i;
    unsigned cntenset = (1U << 31);
 
@@ -172,14 +171,14 @@ void reset_performance_counters(perf_counters_t *pct) {
    asm volatile ("mcr p15,0,%0,c9,c12,1" :: "r" (cntenset) : "memory");
 #else
    // Only two counters (0 and 1) are supported on the arm11
-   ctrl |= (pct->type[0] << 20);
-   ctrl |= (pct->type[1] << 12);
+   ctrl |= (uint32_t)(pct->type[0] << 20);
+   ctrl |= (uint32_t)(pct->type[1] << 12);
    asm volatile ("mcr p15,0,%0,c15,c12,0" :: "r" (ctrl) : "memory");
 #endif
 }
 
 void read_performance_counters(perf_counters_t *pct) {
-#if defined(RPI2) || defined(RPI3)
+#if defined(RPI2) || defined(RPI3) || defined(RPI4)
    int i;
    for (i = 0; i < pct->num_counters; i++) {
       // Select the event count/type via the event type selection register
@@ -203,7 +202,7 @@ static char* uint64ToDecimal(uint64_t v) {
    char* p = bfr + sizeof(bfr);
    *(--p) = '\0';
    while (v || first) {
-      *(--p) = '0' + v % 10;
+      *(--p) = (char)('0' + v % 10);
       v = v / 10;
       first = 0;
    }
@@ -230,7 +229,7 @@ int benchmark() {
    unsigned char mem1[1024*1024];
    unsigned char mem2[1024*1024];
    mem2[0]=0;
-#if defined(RPI2) || defined(RPI3) 
+#if defined(RPI2) || defined(RPI3) || defined(RPI4)
    pct.num_counters = 6;
    pct.type[0] = PERF_TYPE_L1I_CACHE;
    pct.type[1] = PERF_TYPE_L1I_CACHE_REFILL;
@@ -285,7 +284,7 @@ int benchmark() {
       memcpy(mem1, mem2, size);
       read_performance_counters(&pct);
       print_performance_counters(&pct);
-   }   
+   }
 
    return total;
 }

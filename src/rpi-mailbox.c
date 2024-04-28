@@ -1,26 +1,30 @@
 #include <stdint.h>
 
+#include "cache.h"
 #include "rpi-gpio.h"
 #include "rpi-mailbox.h"
 
 /* Mailbox 0 mapped to it's base address */
 static mailbox_t* rpiMailbox0 = (mailbox_t*)RPI_MAILBOX0_BASE;
+static mailbox_t* rpiMailbox1 = (mailbox_t*)RPI_MAILBOX1_BASE;
 
-void RPI_Mailbox0Write( mailbox0_channel_t channel, int value )
+void RPI_Mailbox0Write( mailbox0_channel_t channel, uint32_t *ptr )
 {
+    _clean_cache_area(ptr, ptr[0]);
     /* For information about accessing mailboxes, see:
        https://github.com/raspberrypi/firmware/wiki/Accessing-mailboxes */
 
-    /* Add the channel number into the lower 4 bits */
-    value &= ~(0xF);
-    value |= channel;
+    // Flush any old requests
+    while (!(rpiMailbox0->Status & ARM_MS_EMPTY)) {
+       (void) rpiMailbox0->Data;
+    }
 
     /* Wait until the mailbox becomes available and then write to the mailbox
        channel */
-    while( ( rpiMailbox0->Status & ARM_MS_FULL ) != 0 ) { }
+    while( ( rpiMailbox1->Status & ARM_MS_FULL ) != 0 ) { }
 
     /* Write the modified value + channel number into the write register */
-    rpiMailbox0->Write = value;
+    rpiMailbox1->Data = ((uint32_t)ptr ) | channel;
 }
 
 
@@ -28,20 +32,20 @@ int RPI_Mailbox0Read( mailbox0_channel_t channel )
 {
     /* For information about accessing mailboxes, see:
        https://github.com/raspberrypi/firmware/wiki/Accessing-mailboxes */
-    int value = -1;
+    unsigned int value ;
 
     /* Keep reading the register until the desired channel gives us a value */
-    while( ( value & 0xF ) != channel )
-    {
+   
+    do {
         /* Wait while the mailbox is empty because otherwise there's no value
            to read! */
         while( rpiMailbox0->Status & ARM_MS_EMPTY ) { }
 
         /* Extract the value from the Read register of the mailbox. The value
            is actually in the upper 28 bits */
-        value = rpiMailbox0->Read;
-    }
+        value = rpiMailbox0->Data;
+    }  while( ( value & 0xF ) != channel ) ;
 
     /* Return just the value (the upper 28-bits) */
-    return value >> 4;
+    return (int) (value >> 4);
 }

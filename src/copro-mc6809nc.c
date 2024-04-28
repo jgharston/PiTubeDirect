@@ -41,7 +41,7 @@ void copro_mc6809nc_write(uint16_t addr, uint8_t data) {
    } else {
 #ifdef USE_MEMORY_POINTER
       copro_mc6809_ram[addr & 0xffff] = data;
-#else 
+#else
       *(unsigned char *)(addr & 0xffff) = data;
 #endif
    }
@@ -55,7 +55,7 @@ uint8_t copro_mc6809nc_read(uint16_t addr) {
    } else if (overlay_rom) {
       data = copro_mc6809_rom[addr & 0x7ff];
    } else {
-#if USE_MEMORY_POINTER       
+#ifdef USE_MEMORY_POINTER
       data = copro_mc6809_ram[addr & 0xffff];
 #else
       data = *(unsigned char *)(addr & 0xffff);
@@ -94,19 +94,17 @@ static void copro_mc6809_reset() {
 
 void copro_mc6809nc_emulator()
 {
-   unsigned int tube_irq_copy;
-   
    // Remember the current copro so we can exit if it changes
-   int last_copro = copro;
+   unsigned int last_copro = copro;
 
-   copro_mc6809_poweron_reset(); 
+   copro_mc6809_poweron_reset();
    copro_mc6809_reset();
-  
+
    while (1)
    {
       // Execute emulator for one instruction
       mc6809nc_execute(1);
-      tube_irq_copy = tube_irq & ( RESET_BIT + NMI_BIT + IRQ_BIT);
+      int tube_irq_copy = tube_irq & ( RESET_BIT + NMI_BIT + IRQ_BIT);
       if (tube_irq_copy) {
          // Reset the processor on active edge of rst
          if ( tube_irq_copy & RESET_BIT ) {

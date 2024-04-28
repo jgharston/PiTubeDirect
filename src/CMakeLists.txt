@@ -29,7 +29,7 @@
 
 # CMake 2.8.10 Documentation: http://www.cmake.org/cmake/help/v2.8.10/cmake.html
 
-cmake_minimum_required( VERSION 2.8 )
+cmake_minimum_required( VERSION 2.9 )
 
 # Mark the language as C so that CMake doesn't try to test the C++
 # cross-compiler's ability to compile a simple program because that will fail
@@ -39,11 +39,25 @@ set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS}" )
 
 # Add any C compiler flags here. The C flags concerned with processor tuning
 # are in the toolchain files toolchain-arm-none-eabi-bcm2835.cmake, etc.
-set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2" )
-set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall" )
+set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ffixed-r7" )
+set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Ofast" )
+set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-missing-field-initializers -Wno-unused-parameter" )
 set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -nostartfiles" )
 #set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fomit-frame-pointer " )
-#set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ffixed-ip" )
+
+#set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fanalyzer" )
+#set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto" )
+
+set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wredundant-decls -Wno-maybe-uninitialized -Wno-long-long -Wpacked -Wundef -Wno-shadow  -Wno-missing-braces -Wno-sign-compare -Wno-multichar -Wnarrowing -Woverflow -Wconversion -Wjump-misses-init -Wlogical-not-parentheses -Wnull-dereference -Winit-self -Wpointer-arith  -Wwrite-strings -Wunreachable-code -Wshadow -Wdouble-promotion  -Wformat-truncation -fstack-usage -Wconversion" )
+
+# other options to try which fail currently :
+#set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wmissing-declarations")
+#set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pedantic")
+#set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wformat=2")
+#set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wswitch-enum")
+#set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-overflow=5")
+#set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -Wcast-qual")
+
 
 set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-delete-null-pointer-checks -fdata-sections -ffunction-sections ")
 
@@ -60,6 +74,8 @@ file( GLOB core_files
     armc-cstartup.c
     armc-cstubs.c
     armc-start.S
+    copro-defs.c
+    copro-defs.h
     tube-client.c
     tube-defs.h
     tube-exception.c
@@ -75,6 +91,8 @@ file( GLOB core_files
     rpi-mailbox.h
     rpi-mailbox-interface.c
     rpi-mailbox-interface.h
+    rpi-systimer.c
+    rpi-systimer.h
     tube.S
     tube-ula.c
     programs.c
@@ -89,6 +107,20 @@ file( GLOB core_files
     logging.h
     utils.c
     utils.h
+    framebuffer/framebuffer.c
+    framebuffer/framebuffer.h
+    framebuffer/swi_impl.c
+    framebuffer/screen_modes.c
+    framebuffer/screen_modes.h
+    framebuffer/primitives.c
+    framebuffer/primitives.h
+    framebuffer/fonts.c
+    framebuffer/fonts.h
+    framebuffer/teletext.c
+    framebuffer/teletext.h
+    framebuffer/module.h
+    framebuffer/module_colourtrans.c
+    framebuffer/module_colourtrans.h
 )
 
 # 6502 Co Processor using 65tube Implementation
@@ -96,6 +128,9 @@ file( GLOB copro_65tube_files
     copro-65tube.h
     copro-65tube.c
     copro-65tubeasm.S
+    copro-65tubejit.h
+    copro-65tubejit.c
+    jit.S
 )
 
 # 6502 Co Processor using 65tube Implementation
@@ -110,6 +145,7 @@ file( GLOB copro_lib6502_files
 file( GLOB shared_6502_files
     tuberom_6502.h
     tuberom_6502.c
+    tuberom_6502_turbo.c
 )
 
 # 80186 Co Pro
@@ -161,6 +197,8 @@ file( GLOB copro_32016_files
 file( GLOB copro_z80_files
     copro-z80.h
     copro-z80.c
+    tuberom_z80.h
+    tuberom_z80.c
     yaze/simz80.h
     yaze/simz80.c
     yaze/mem_mmu.h
@@ -210,6 +248,17 @@ file( GLOB copro_opc7_files
     opc7/tuberom.c
 )
 
+# F100
+file( GLOB copro_f100_files
+    copro-f100.h
+    copro-f100.c
+    f100/f100.h
+    f100/f100.c
+    f100/tuberom.h
+    f100/tuberom.c
+)
+
+
 # PDP 11
 file( GLOB copro_pdp11_files
     copro-pdp11.h
@@ -218,6 +267,17 @@ file( GLOB copro_pdp11_files
     pdp11/pdp11.c
     pdp11/tuberom.h
     pdp11/tuberom.c
+)
+
+# 65816
+file( GLOB copro_65816_files
+    65816/65816.c
+    65816/65816.h
+    65816/tuberom_65816.h
+    65816/tuberom_dominic65816.c
+    65816/tuberom_reco65816.c
+    copro-65816.c
+    copro-65816.h
 )
 
 # Null co processor
@@ -231,10 +291,10 @@ file( GLOB copro_arm_files
     copro-armnative.c
     copro-armnativeasm.S
     copro-armnative.h
+    armbasic.h
+    armbasic.c
     rpi-armtimer.c
     rpi-armtimer.h
-    rpi-systimer.c
-    rpi-systimer.h
     swi.c
     swi.h
     tube-env.h
@@ -295,6 +355,10 @@ file( GLOB debugger_files
     opc7/opc7_debug.h
     pdp11/pdp11_debug.c
     pdp11/pdp11_debug.h
+    f100/f100_debug.c
+    f100/f100_debug.h
+    65816/65816_debug.c
+    65816/65816_debug.h
 )
 
 if( ${DEBUG} )
@@ -338,6 +402,8 @@ else()
             ${copro_opc5ls_files}
             ${copro_opc6_files}
             ${copro_opc7_files}
+            ${copro_f100_files}
+            ${copro_65816_files}
             ${copro_pdp11_files}
             ${copro_null_files}
             ${copro_arm_files}
@@ -362,6 +428,8 @@ else()
             ${copro_opc5ls_files}
             ${copro_opc6_files}
             ${copro_opc7_files}
+            ${copro_f100_files}
+            ${copro_65816_files}
             ${copro_pdp11_files}
             ${copro_null_files}
             ${copro_arm_files}
@@ -370,7 +438,7 @@ else()
     endif()
 
 endif()
-    
+
 target_link_libraries (tube-client m)
 
 add_custom_command(
@@ -391,4 +459,3 @@ add_custom_command(
 )
 
 add_dependencies(tube-client gitversion)
-

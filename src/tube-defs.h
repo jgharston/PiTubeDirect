@@ -3,7 +3,7 @@
 #ifndef TUBE_DEFS_H
 #define TUBE_DEFS_H
 
-#define RELEASENAME "EggEater"
+#define RELEASENAME "Hognose"
 
 #define NDEBUG
 
@@ -17,62 +17,21 @@
 
 #define LOG_WARN(...) printf(__VA_ARGS__)
 
-// Our copro numbers mostly match those on the matchbox
-// (many are not implemented though)
-
-// 0 0 0 0 -   4MHz 65C102 ( 64KB internal RAM,   AlanD core)
-// 0 0 0 1 -   8MHz 65C102 ( 64KB internal RAM,   AlanD core)
-// 0 0 1 0 -  16MHz 65C102 ( 64KB internal RAM,   AlanD core)
-// 0 0 1 1 -  32MHz 65C102 ( 64KB internal RAM,   AlanD core)
-// 0 1 0 0 -   8MHz Z80    ( 64KB external RAM,     T80 core)
-// 0 1 0 1 -  32MHz Z80    ( 64KB internal RAM, NextZ80 core)
-// 0 1 1 0 -  56MHz Z80    ( 64KB internal RAM, NextZ80 core)
-// 0 1 1 1 -      x OPC7  previously a Z80
-// 1 0 0 0 -  16Mhz 80286  (896KB external RAM,     Zet core)
-// 1 0 0 1 -   4MHz 6809   ( 64KB external RAM,   SYS09 core)
-// 1 0 1 0 -  16MHz 68000  (  1MB external RAM,    TG68 core)
-// 1 0 1 1 -  32MHz PDP11  ( 64KB internal RAM, PDP2011 core)
-// 1 1 0 0 -  32MHz ARM2   (  2MB external RAM, Amber23 core)
-// 1 1 0 1 -  32MHz 32016  (  2MB external RAM,  m32632 core)
-// 1 1 1 0 -   Null / SPI  (          Raspberry Pi soft core)
-// 1 1 1 1 -   BIST        ( for manufacturing test purposes)
-
-// Configure the particular coprocessor
-#define COPRO_65TUBE_0   0
-#define COPRO_65TUBE_1   1
-#define COPRO_LIB6502_0  2
-#define COPRO_LIB6502_1  3
-#define COPRO_Z80        4
-#define COPRO_OPC5LS     5
-#define COPRO_OPC6       6
-#define COPRO_OPC7       7
-#define COPRO_80286      8
-#define COPRO_6809       9
-#define COPRO_68000     10 // not implemented
-#define COPRO_PDP11     11 // not implemented
-#define COPRO_ARM2      12
-#define COPRO_32016     13
-#define COPRO_NULL      14
-#define COPRO_ARMNATIVE 15
-
-#define DEFAULT_COPRO COPRO_65TUBE_0
-
 // Pi 2/3 Multicore options
-#if defined(RPI2) || defined(RPI3)
+#if defined(RPI2) || defined(RPI3) || defined(RPI4)
 
 // Indicate the platform has multiple cores
 #define HAS_MULTICORE
 
 #endif
 
-#define USE_GPU
-
-#define USE_HW_MAILBOX
+// If defined, the doorbell is used rather then the mailbox
+#define USE_DOORBELL
 
 //
 // tube_irq bit definitions
 //
-// bit 7 Selects if R7 is used to inform the copro of an interupt event used for fast 6502
+// bit 7 Selects if R7 is used to inform the copro of an interrupt event used for fast 6502
 // bit 6 Selects if direct native arm irq are used
 // bit 5 native arm irq lock
 // bit 3 tube_enable
@@ -89,7 +48,8 @@
 
 #include "rpi-base.h"
 
-
+#define DOORBELL        (PERIPHERAL_BASE + 0x00B844) // Doorbell 1
+#define DOORBELLDATA    (PERIPHERAL_BASE + 0x20C014) // Hijack PWM_DAT1 for Doorbell1 Data
 #define MBOX0_READ      (PERIPHERAL_BASE + 0x00B880)
 #define MBOX0_STATUS    (PERIPHERAL_BASE + 0x00B898)
 #define MBOX0_CONFIG    (PERIPHERAL_BASE + 0x00B89C)

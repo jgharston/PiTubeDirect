@@ -9,16 +9,9 @@
 #include "../rpi-aux.h"
 #include "../cpu_debug.h"
 
-#include "../lib6502_debug.h"
-#include "../yaze/simz80.h"
-#include "../cpu80186/cpu80186_debug.h"
-#include "../mc6809nc/mc6809_debug.h"
-#include "../mame/arm_debug.h"
-#include "../NS32016/32016_debug.h"
-#include "../opc5ls/opc5ls_debug.h"
-#include "../opc6/opc6_debug.h"
-#include "../opc7/opc7_debug.h"
-#include "../pdp11/pdp11_debug.h"
+#include "../copro-defs.h"
+
+#include "../info.h"
 
 #define USE_LINENOISE
 
@@ -30,26 +23,7 @@ static const char * prompt_str = ">> ";
 
 extern unsigned int copro;
 
-cpu_debug_t *cpu_debug_list[] = {
-   NULL,                //  0 65tube
-   NULL,                //  1 65tube
-   &lib6502_cpu_debug,  //  2 lib6502
-   &lib6502_cpu_debug,  //  3 lib6502
-   &simz80_cpu_debug,   //  4 Z80
-   &opc5ls_cpu_debug,   //  5 OPC5LS
-   &opc6_cpu_debug,     //  6 OPC6
-   &opc7_cpu_debug,     //  7 OPC7
-   &cpu80186_cpu_debug, //  8 80x86
-   &mc6809nc_cpu_debug, //  9 6809
-   NULL,                // 10 unused
-   &pdp11_cpu_debug,    // 11 PDP11
-   &arm2_cpu_debug,     // 12 ARM2
-   &n32016_cpu_debug,   // 13 32016
-   NULL,                // 14 unused
-   NULL,                // 15 Native ARM
-};
-
-#define NUM_CMDS 23
+#define NUM_CMDS 24
 #define NUM_IO_CMDS 6
 
 // The Atom CRC Polynomial
@@ -99,6 +73,7 @@ static void doCmdDis(const char *params);
 static void doCmdFill(const char *params);
 static void doCmdHelp(const char *params);
 static void doCmdIn(const char *params);
+static void doCmdInfo(const char *params);
 static void doCmdList(const char *params);
 static void doCmdMem(const char *params);
 static void doCmdNext(const char *params);
@@ -120,7 +95,8 @@ static void doCmdWr(const char *params);
 // if h is entered, then help will match.
 
 // Must be kept in step with dbgCmdFuncs (just below)
-static char *dbgCmdStrings[NUM_CMDS + NUM_IO_CMDS] = {
+static const char *dbgCmdStrings[NUM_CMDS + NUM_IO_CMDS] = {
+   "info",
    "help",
    "continue",
    "step",
@@ -152,7 +128,8 @@ static char *dbgCmdStrings[NUM_CMDS + NUM_IO_CMDS] = {
    "watcho"
 };
 
-static char *dbgHelpStrings[NUM_CMDS + NUM_IO_CMDS] = {
+static const char *dbgHelpStrings[NUM_CMDS + NUM_IO_CMDS] = {
+   "",                       // info
    "[ <command> ]",          // help
    "",                       // continue
    "[ <num instructions> ]", // step
@@ -186,6 +163,7 @@ static char *dbgHelpStrings[NUM_CMDS + NUM_IO_CMDS] = {
 
 // Must be kept in step with dbgCmdStrings (just above)
 static void (*dbgCmdFuncs[NUM_CMDS + NUM_IO_CMDS])(const char *params) = {
+   doCmdInfo,
    doCmdHelp,
    doCmdContinue,
    doCmdStep,
@@ -256,8 +234,8 @@ static int base;
 
 static int width;
 
-static cpu_debug_t *getCpu() {
-   return cpu_debug_list[copro];
+static const cpu_debug_t *getCpu() {
+   return copro_defs[copro].debugger;
 }
 
 static char *format_addr(uint32_t i) {
@@ -301,6 +279,15 @@ static char *format_data(uint32_t i) {
    }
    return result;
 }
+static char *format_char(uint32_t i) {
+   static char result[32];
+   if (i < 32 || i > 126) {
+      i = '.';
+   }
+   sprintf(result,"( %c )", (char) i);
+   return result;
+}
+
 
 // Internal memory accessor helpers
 //
@@ -314,56 +301,52 @@ static char *format_data(uint32_t i) {
 // To simplify matters, the width command doesn't let
 // use set the width less than the cpu width.
 
-static uint32_t memread(cpu_debug_t *cpu, uint32_t addr) {
+static uint32_t memread(const cpu_debug_t *cpu, uint32_t addr) {
    uint32_t value = 0;
    int num  = 1 << (width - cpu->mem_width);
-   int size = 1 << (3 + cpu->mem_width);
-   int mask = (1 << size) - 1;
-   int i;
+   uint32_t size = 1u << (3 + cpu->mem_width);
+   uint32_t mask = (1u << size) - 1;
    internal = 1;
-   for (i = num - 1; i >= 0; i--) {
+   for (int i = num - 1; i >= 0; i--) {
       value <<= size;
-      value |= (cpu->memread(addr + i) & mask);
+      value |= (cpu->memread(addr + (uint32_t)i) & mask);
    }
    internal = 0;
    return value;
 }
 
-static void memwrite(cpu_debug_t *cpu, uint32_t addr, uint32_t value) {
+static void memwrite(const cpu_debug_t *cpu, uint32_t addr, uint32_t value) {
    internal = 1;
-   int num  = 1 << (width - cpu->mem_width);
-   int size = 1 << (3 + cpu->mem_width);
-   int mask = (1 << size) - 1;
-   int i;
-   for (i = 0; i < num; i++) {
+   uint32_t num  = 1u << (width - cpu->mem_width);
+   uint32_t size = 1u << (3 + cpu->mem_width);
+   uint32_t mask = (1u << size) - 1;
+   for (uint32_t i = 0; i < num; i++) {
       cpu->memwrite(addr + i, value & mask);
       value >>= size;
    }
    internal = 0;
 }
 
-static uint32_t ioread(cpu_debug_t *cpu, uint32_t addr) {
+static uint32_t ioread(const cpu_debug_t *cpu, uint32_t addr) {
    uint32_t value = 0;
    int num  = 1 << (width - cpu->io_width);
-   int size = 1 << (3 + cpu->io_width);
-   int mask = (1 << size) - 1;
-   int i;
+   uint32_t size = 1u << (3 + cpu->io_width);
+   uint32_t mask = (1u << size) - 1;
    internal = 1;
-   for (i = num - 1; i >= 0; i++) {
+   for (int i = num - 1; i >= 0; i--) {
       value <<= size;
-      value |= cpu->ioread(addr + i) & mask;
+      value |= cpu->ioread(addr + (uint32_t)i) & mask;
    }
    internal = 0;
    return value;
 }
 
-static void iowrite(cpu_debug_t *cpu, uint32_t addr, uint32_t value) {
+static void iowrite(const cpu_debug_t *cpu, uint32_t addr, uint32_t value) {
    internal = 1;
-   int num  = 1 << (width - cpu->io_width);
-   int size = 1 << (3 + cpu->io_width);
-   int mask = (1 << size) - 1;
-   int i;
-   for (i = 0; i < num; i++) {
+   uint32_t num  = 1u << (width - cpu->io_width);
+   uint32_t size = 1u << (3 + cpu->io_width);
+   uint32_t mask = (1u << size) - 1;
+   for (uint32_t i = 0; i < num; i++) {
       cpu->iowrite(addr + i, value & mask);
       value >>= size;
    }
@@ -400,7 +383,7 @@ static void cpu_continue() {
 }
 
 static void disassemble_addr(uint32_t addr) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    internal = 1;
    next_addr = cpu->disassemble(addr, strbuf, sizeof(strbuf));
    internal = 0;
@@ -425,19 +408,19 @@ static inline breakpoint_t *check_for_breakpoints(uint32_t addr, breakpoint_t *p
 
 // TODO: size should not be ignored!
 
-static inline void generic_memory_access(cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size,
+static inline void generic_memory_access(const cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size,
                                          const char *type, breakpoint_t *list) {
    breakpoint_t *ptr = check_for_breakpoints(addr, list);
    if (ptr) {
       uint32_t pc = cpu->get_instr_addr();
       if (ptr->mode == MODE_BREAK) {
          noprompt();
-         printf("%s breakpoint hit at %s : %s = %s\r\n", type, format_addr(pc), format_addr2(addr), format_data(value));
+         printf("%s breakpoint hit at %s : %s = %s %s\r\n", type, format_addr(pc), format_addr2(addr), format_data(value), format_char(value));
          prompt();
          disassemble_addr(pc);
       } else {
          noprompt();
-         printf("%s watchpoint hit at %s : %s = %s\r\n", type, format_addr(pc), format_addr2(addr), format_data(value));
+         printf("%s watchpoint hit at %s : %s = %s %s\r\n", type, format_addr(pc), format_addr2(addr), format_data(value), format_char(value));
          prompt();
       }
       while (stopped);
@@ -445,7 +428,7 @@ static inline void generic_memory_access(cpu_debug_t *cpu, uint32_t addr, uint32
 }
 
 void debug_init () {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    int i;
    // Clear any pre-existing breakpoints
    breakpoint_t *lists[] = {
@@ -493,33 +476,33 @@ void debug_init () {
       // Disable the debugger
       cpu->debug_enable(0);
    }
-};
+}
 
-void debug_memread (cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size) {
+void debug_memread (const cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size) {
    if (!internal) {
       generic_memory_access(cpu, addr, value, size, "Mem Rd", mem_rd_breakpoints);
    }
-};
+}
 
-void debug_memwrite(cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size) {
+void debug_memwrite(const cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size) {
    if (!internal) {
       generic_memory_access(cpu, addr, value, size, "Mem Wr", mem_wr_breakpoints);
    }
-};
+}
 
-void debug_ioread (cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size) {
+void debug_ioread (const cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size) {
    if (!internal) {
       generic_memory_access(cpu, addr, value, size, "IO Rd", io_rd_breakpoints);
    }
-};
+}
 
-void debug_iowrite(cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size) {
+void debug_iowrite(const cpu_debug_t *cpu, uint32_t addr, uint32_t value, uint8_t size) {
    if (!internal) {
       generic_memory_access(cpu, addr, value, size, "IO Wr", io_wr_breakpoints);
    }
-};
+}
 
-void debug_preexec (cpu_debug_t *cpu, uint32_t addr) {
+void debug_preexec (const cpu_debug_t *cpu, uint32_t addr) {
    int show = 0;
 
    if (addr == break_next_addr) {
@@ -563,7 +546,7 @@ void debug_preexec (cpu_debug_t *cpu, uint32_t addr) {
       disassemble_addr(addr);
    }
    while (stopped);
-};
+}
 
 void debug_trap(const cpu_debug_t *cpu, uint32_t addr, int reason) {
    const char *desc = cpu->trap_names[reason];
@@ -576,13 +559,13 @@ void debug_trap(const cpu_debug_t *cpu, uint32_t addr, int reason) {
  * Helpers
  *******************************************/
 
-int parseNparams(const char *p, int required, int total, unsigned int **result) {
+static int parseNparams(const char *p, int required, int total, unsigned int **result) {
    char *endptr;
    int i;
    int n = 0;
    for (i = 0; i < total; i++) {
       // Check if there is something to parse
-      while (isspace(*p)) {
+      while (isspace((int)*p)) {
          p++;
       }
       // Exit if not (allows later parems to be optional)
@@ -596,7 +579,7 @@ int parseNparams(const char *p, int required, int total, unsigned int **result) 
          p += 2;
       }
       // Parse it in the current base
-      unsigned int value = strtol(p, &endptr, b);
+      unsigned int value = (unsigned int )strtol(p, &endptr, b);
       if (endptr == p) {
          printf("bad format for parameter %d\r\n", i + 1);
          return 1;
@@ -612,37 +595,37 @@ int parseNparams(const char *p, int required, int total, unsigned int **result) 
    return 0;
 }
 
-int parse1params(const char *params, int required, unsigned int *p1) {
+static int parse1params(const char *params, int required, unsigned int *p1) {
    unsigned int *p[] = { p1 };
    return parseNparams(params, required, 1, p);
 }
 
-int parse2params(const char *params, int required, unsigned int *p1, unsigned int *p2) {
+static int parse2params(const char *params, int required, unsigned int *p1, unsigned int *p2) {
    unsigned int *p[] = { p1, p2 };
    return parseNparams(params, required, 2, p);
 }
 
-int parse3params(const char *params, int required, unsigned int *p1, unsigned int *p2, unsigned int *p3) {
+static int parse3params(const char *params, int required, unsigned int *p1, unsigned int *p2, unsigned int *p3) {
    unsigned int *p[] = { p1, p2, p3 };
    return parseNparams(params, required, 3, p);
 }
 
 // Set the breakpoint state variables
-void setBreakpoint(breakpoint_t *ptr, char *type, unsigned int addr, unsigned int mask, unsigned int mode) {
+static void setBreakpoint(breakpoint_t *ptr, const char *type, unsigned int addr, unsigned int mask, int mode) {
    printf("%s %s set at %s\r\n", type, modeStrings[mode], format_addr(addr));
    ptr->addr = addr & mask;
    ptr->mask = mask;
    ptr->mode = mode;
 }
 
-void copyBreakpoint(breakpoint_t *ptr1, const breakpoint_t *ptr2) {
+static void copyBreakpoint(breakpoint_t *ptr1, const breakpoint_t *ptr2) {
    ptr1->addr = ptr2->addr;
    ptr1->mask = ptr2->mask;
    ptr1->mode = ptr2->mode;
 }
 
 // A generic helper that does most of the work of the watch/breakpoint commands
-void genericBreakpoint(const char *params, char *type, breakpoint_t *list, unsigned int mode) {
+static void genericBreakpoint(const char *params, const char *type, breakpoint_t *list, int mode) {
    int i = 0;
    unsigned int addr;
    unsigned int mask = 0xFFFFFFFF;
@@ -674,13 +657,9 @@ void genericBreakpoint(const char *params, char *type, breakpoint_t *list, unsig
 }
 
 static int parseCommand(const char ** cmdptr) {
-   int i;
-   char *cmdString;
-   int minLen;
-   int cmdStringLen;
-   int cmdLen = 0;
+   size_t cmdLen = 0;
    const char *cmd = *cmdptr;
-   while (isspace(*cmd)) {
+   while (isspace((int)*cmd)) {
       cmd++;
    }
    while (cmd[cmdLen] >= 'a' && cmd[cmdLen] <= 'z') {
@@ -691,10 +670,10 @@ static int parseCommand(const char ** cmdptr) {
       if (HAS_IO) {
          n += NUM_IO_CMDS;
       }
-      for (i = 0; i < n; i++) {
-         cmdString = dbgCmdStrings[i];
-         cmdStringLen = strlen(cmdString);
-         minLen = cmdLen < cmdStringLen ? cmdLen : cmdStringLen;
+      for (int i = 0; i < n; i++) {
+         const char *cmdString = dbgCmdStrings[i];
+         size_t cmdStringLen = strlen(cmdString);
+         size_t minLen = cmdLen < cmdStringLen ? cmdLen : cmdStringLen;
          if (strncmp(cmdString, cmd, minLen) == 0) {
             *cmdptr = cmd + cmdLen;
             return i;
@@ -723,7 +702,7 @@ static void doCmdBase(const char *params) {
 }
 
 static void doCmdWidth(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    int i = -1;
    sscanf(params, "%d", &i);
    if (i == 8) {
@@ -746,9 +725,12 @@ static void doCmdWidth(const char *params) {
       printf("Setting data width to %s\r\n", width_names[i]);
    }
 }
+static void doCmdInfo(const char *params) {
+   dump_useful_info();
+}
 
 static void doCmdHelp(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    int i = parseCommand(&params);
    if (i >= 0) {
       printf("%8s %s\r\n", dbgCmdStrings[i], dbgHelpStrings[i]);
@@ -770,7 +752,7 @@ static void doCmdHelp(const char *params) {
 }
 
 static void doCmdRegs(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    const char **reg = cpu->reg_names;
    char name[100];
    char value[100];
@@ -809,7 +791,7 @@ static void doCmdRegs(const char *params) {
 }
 
 static void doCmdTraps(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    const char **trap = cpu->trap_names;
    if (*trap) {
       while (*trap) {
@@ -822,7 +804,7 @@ static void doCmdTraps(const char *params) {
 }
 
 static void doCmdDis(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    int i = 0;
    unsigned int endAddr = 0;
    if (parse2params(params, 1, &memAddr, &endAddr)) {
@@ -839,7 +821,7 @@ static void doCmdDis(const char *params) {
 }
 
 static void doCmdFill(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    unsigned int i;
    unsigned int start;
    unsigned int end;
@@ -847,27 +829,26 @@ static void doCmdFill(const char *params) {
    if (parse3params(params, 3, &start, &end, &data)) {
       return;
    }
-   printf("Wr: %s to %s = %s\r\n", format_addr(start), format_addr2(end), format_data(data));
-   int stride = 1 << (width - cpu->mem_width);
+   printf("Wr: %s to %s = %s %s\r\n", format_addr(start), format_addr2(end), format_data(data), format_char(data));
+   unsigned int stride = 1u << (width - cpu->mem_width);
    for (i = start; i <= end; i += stride) {
       memwrite(cpu, i, data);
    }
 }
 
 static void doCmdCrc(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    unsigned int i;
    unsigned int j;
    unsigned int start;
    unsigned int end;
-   unsigned int data;
    unsigned int crc = 0;
    if (parse2params(params, 2, &start, &end)) {
       return;
    }
-   int stride = 1 << (width - cpu->mem_width);
+   unsigned int stride = 1 << (width - cpu->mem_width);
    for (i = start; i <= end; i += stride) {
-      data = memread(cpu, i);
+      unsigned int data = memread(cpu, i);
       for (j = 0; j < 8 * stride; j++) {
          crc = crc << 1;
          crc = crc | (data & 1);
@@ -880,22 +861,22 @@ static void doCmdCrc(const char *params) {
 }
 
 static void doCmdMem(const char *params) {
-   cpu_debug_t *cpu = getCpu();
-   int i, j;
+   const cpu_debug_t *cpu = getCpu();
+   unsigned int i, j;
    unsigned int row[16];
    unsigned int endAddr = 0;
    if (parse2params(params, 1, &memAddr, &endAddr)) {
       return;
    }
    // Number of cols is set so we get 16 bytes per row
-   int n_cols  = 0x10 >> width;
+   unsigned int n_cols  = 0x10u >> width;
    // Number of characters in each item
-   int n_chars = 1 << width;
+   unsigned int n_chars = 1u << width;
    // Address step of each item
-   int stride  = 0x01 << (width - cpu->mem_width);
-   // Default end to enought data for 16 rows
+   unsigned int stride  = 0x01u << (width - cpu->mem_width);
+   // Default end to enough data for 16 rows
    if (endAddr == 0) {
-      endAddr = memAddr + 16 * n_cols * stride;
+      endAddr = memAddr + 16u * n_cols * stride;
    }
    do {
       printf("%s  ", format_addr(memAddr));
@@ -920,46 +901,46 @@ static void doCmdMem(const char *params) {
 }
 
 static void doCmdRd(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    unsigned int addr;
    unsigned int data;
    if (parse1params(params, 1, &addr)) {
       return;
    }
    data = memread(cpu, addr);
-   printf("Rd Mem: %s = %s\r\n", format_addr(addr), format_data(data));
+   printf("Rd Mem: %s = %s %s\r\n", format_addr(addr), format_data(data), format_char(data));
 }
 
 static void doCmdWr(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    unsigned int addr;
    unsigned int data;
    if (parse2params(params, 2, &addr, &data)) {
       return;
    }
-   printf("Wr Mem: %s = %s\r\n", format_addr(addr), format_data(data));
+   printf("Wr Mem: %s = %s %s\r\n", format_addr(addr), format_data(data), format_char(data));
    memwrite(cpu, addr++, data);
 }
 
 static void doCmdIn(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    unsigned int addr;
    unsigned int data;
    if (parse1params(params, 1, &addr) < 0) {
       return;
    }
    data = ioread(cpu, addr);
-   printf("Rd IO: %s = %s\r\n", format_addr(addr), format_data(data));
+   printf("Rd IO: %s = %s %s\r\n", format_addr(addr), format_data(data), format_char(data));
 }
 
 static void doCmdOut(const char *params) {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    unsigned int addr;
    unsigned int data;
    if (parse2params(params, 2, &addr, &data)) {
       return;
    }
-   printf("Wr IO: %s = %s\r\n", format_addr(addr), format_data(data));
+   printf("Wr IO: %s = %s %s\r\n", format_addr(addr), format_data(data), format_char(data));
    iowrite(cpu, addr++, data);
 }
 
@@ -1066,9 +1047,9 @@ static void doCmdWatchOut(const char *params) {
 }
 
 
-int genericClear(uint32_t addr, char *type, breakpoint_t *list) {
+static int genericClear(uint32_t addr, const char *type, breakpoint_t *list) {
 
-   int i = 0;
+   unsigned int i = 0;
 
    // Assume addr is an address, and try to map to an index
    while (list[i].mode != MODE_LAST) {
@@ -1081,18 +1062,16 @@ int genericClear(uint32_t addr, char *type, breakpoint_t *list) {
       if (addr < i) {
          i = addr;
       } else {
-         i = -1;
+         return 0;
       }
    }
-   if (i >= 0) {
-      printf("Removed %s breakpoint at %s\r\n", type, format_addr(list[i].addr));
-      do {
-         copyBreakpoint(list + i, list + i + 1);
-         i++;
-      } while (list[i - 1].mode != MODE_LAST);
-      return 1;
-   }
-   return 0;
+
+   printf("Removed %s breakpoint at %s\r\n", type, format_addr(list[i].addr));
+   do {
+      copyBreakpoint(list + i, list + i + 1);
+      i++;
+   } while (list[i - 1].mode != MODE_LAST);
+   return 1;
 }
 
 
@@ -1126,7 +1105,7 @@ static void doCmdContinue(const char *params) {
 
 
 static void updateDebugFlag() {
-   cpu_debug_t *cpu = getCpu();
+   const cpu_debug_t *cpu = getCpu();
    int enable = 0;
    if (stepping) {
       enable = 1;
@@ -1163,9 +1142,14 @@ static void updateDebugFlag() {
 static void dispatchCmd(const char *cmd) {
    int cmdNum = parseCommand(&cmd);
    if (cmdNum >= 0) {
-      cpu_debug_t *cpu = getCpu();
+      const cpu_debug_t *cpu = getCpu();
       if (cpu == NULL) {
-         printf("No debugger available for this co pro\r\n");
+         if (cmdNum == 0) {
+            // Allow info even without a debugger
+            (*dbgCmdFuncs[cmdNum])(cmd);
+         } else {
+            printf("No debugger available for this co pro\r\n");
+         }
       } else {
          (*dbgCmdFuncs[cmdNum])(cmd);
          updateDebugFlag();

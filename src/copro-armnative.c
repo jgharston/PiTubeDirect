@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include "copro-armnative.h"
+#include "armbasic.h"
 
 #include "rpi-aux.h"
 #include "rpi-armtimer.h"
@@ -51,7 +52,9 @@
 #include "tube-isr.h"
 #include "tube-ula.h"
 
-static int last_copro;
+#include "framebuffer/framebuffer.h"
+
+static unsigned int last_copro;
 
 static jmp_buf reboot;
 
@@ -74,24 +77,26 @@ Environment_type *env = &defaultEnvironment;
  ***********************************************************/
 
 // Note: this will be executed in user mode
-static void defaultErrorHandler(const ErrorBuffer_type *eb) {
+static void defaultErrorHandler(unsigned int r0) {
   // TODO: Consider resetting the user stack?
+  const ErrorBuffer_type *eb = &defaultErrorBuffer;
   if (DEBUG_ARM) {
     printf("Error = %p %02x %s\r\n", eb->errorAddr, eb->errorBlock.errorNum, eb->errorBlock.errorMsg);
   }
-  sendString(R1_ID, 0x00, eb->errorBlock.errorMsg);
-  sendString(R1_ID, 0x00, "\n\r");
+  OS_Write0(eb->errorBlock.errorMsg);
+  OS_WriteC(10);
+  OS_WriteC(13);
   OS_Exit();
 }
 
 // Entered with R11 bit 6 as escape status
-// R12 contains 0/-1 if not in/in the kernal presently
+// R12 contains 0/-1 if not in/in the kernel presently
 // R11 and R12 may be altered. Return with MOV PC,R14
 // If R12 contains 1 on return then the Callback will be used
 
 // Note, the way we invoke this via the _escape_handler_wrapper will
 // work, because the flag will also still be in r0.
-static void defaultEscapeHandler(unsigned int flag) {
+static void defaultEscapeHandler(unsigned int flag, unsigned int workspace) {
   if (DEBUG_ARM) {
     printf("Escape flag = %02x\r\n", flag);
   }
@@ -100,7 +105,7 @@ static void defaultEscapeHandler(unsigned int flag) {
 
 // Entered with R0, R1 and R2 containing the A, X and Y parameters. R0,
 // R1, R2, R11 and R12 may be altered. Return with MOV PC, R14
-// R12 contains 0/-1 if not in/in the kernal presently
+// R12 contains 0/-1 if not in/in the kernel presently
 // R13 contains the IRQ handling routine stack. When you return to the
 // system LDMFD R13!, (R0,R1,R2,R11,R12,PC}^ will be executed. If R12
 // contains 1 on return then the Callback will be used.
@@ -115,10 +120,12 @@ static void defaultExitHandler() {
   if (DEBUG_ARM) {
     printf("Invoking default exit handler\r\n");
   }
+  // Avoid re-entering ARM Basic
+  armbasic = 0;
   // Move back to supervisor mode
   swi(SWI_OS_EnterOS);
   // Jump back to the command prompt
-  longjmp(enterOS, 1);  
+  longjmp(enterOS, 1);
 }
 
 static void defaultUndefinedInstructionHandler() {
@@ -163,7 +170,7 @@ static void defaultUpcallHandler() {
 
 static void initEnv() {
   defaultEscapeFlag = 0;
-  int i;
+  unsigned int i;
   for (i = 0; i < sizeof(env->commandBuffer); i++) {
     env->commandBuffer[i] = 0;
   }
@@ -192,8 +199,8 @@ static void initEnv() {
   env->handler[                 UPCALL_HANDLER].handler = defaultUpcallHandler;
 
   // Handlers where the handler is just data
-  env->handler[           MEMORY_LIMIT_HANDLER].handler = (EnvironmentHandler_type) (16 * 1024 * 1024);
-  env->handler[      APPLICATION_SPACE_HANDLER].handler = (EnvironmentHandler_type) (16 * 1024 * 1024);
+  env->handler[           MEMORY_LIMIT_HANDLER].handler = (EnvironmentHandler_type) (200 * 1024 * 1024); // 200MB
+  env->handler[      APPLICATION_SPACE_HANDLER].handler = (EnvironmentHandler_type) (200 * 1024 * 1024); // 200MB
   env->handler[CURRENTLY_ACTIVE_OBJECT_HANDLER].handler = (EnvironmentHandler_type) (0);
 }
 
@@ -212,7 +219,7 @@ static void tube_Reset() {
   if (DEBUG_ARM) {
     printf( "Banner sent, awaiting response\r\n" );
   }
-  // Wait for the reponse in R2
+  // Wait for the response in R2
   receiveByte(R2_ID);
   if (DEBUG_ARM) {
     printf( "Received response\r\n" );
@@ -225,7 +232,7 @@ static void tube_Reset() {
  ***********************************************************/
 
 static int cli_loop() {
-  unsigned int flags;
+  unsigned int flags=0;
   int length;
 
   while( 1 ) {
@@ -268,7 +275,7 @@ void copro_armnative_reset() {
   // Move back to supervisor mode
   swi(SWI_OS_EnterOS);
   // Jump back to the boot message
-  longjmp(reboot, 1);  
+  longjmp(reboot, 1);
 }
 
 /***********************************************************
@@ -276,6 +283,7 @@ void copro_armnative_reset() {
  ***********************************************************/
 
 void copro_armnative_emulator() {
+  unsigned int last_break;
 
   // Disable interrupts!
   _disable_interrupts();
@@ -286,26 +294,38 @@ void copro_armnative_emulator() {
   // Active the mailbox
   copro_armnative_enable_mailbox();
 
+  // Default to armbasic off when Co Pro starts
+  armbasic = 0;
+
   // When a reset occurs, we want to return to here
   setjmp(reboot);
 
   if (copro != last_copro) {
-    // Deactive the mailbox
+    // Deactivate the mailbox
     copro_armnative_disable_mailbox();
     // Allow another copro to be selected
     return;
   }
 
+  swi_modules_init(0);
+
+  // If vdu=1 in cmdline.txt
+  if (vdu_enabled) {
+     // Reset all the SWI handlers to the default versions
+     fb_set_vdu_device(VDU_BEEB);
+  }
+
   // Create the startup banner
-  sprintf(banner, "Native ARM Co Processor %dMHz\r\n\n", get_speed());
+  sprintf(banner, "Native ARM Co Processor %"PRId32"MHz\r\n\n", get_speed());
 
   // Initialize the environment structure
   initEnv();
 
-  // If the default exit handler is called during tube_Reset(), we return here
-  // This should not be necessary, but I've seen a couple of cases
-  // where R4 errors happened during the startup message
-  setjmp(enterOS);
+  // Enable interrupts!
+  _enable_interrupts();
+
+  // Inhibit the language transfer to avoid any BASIC programs getting trashed
+  set_ignore_transfer(1);
 
   // Log ARM performance counters
   tube_log_performance_counters();
@@ -313,17 +333,36 @@ void copro_armnative_emulator() {
   // Wait for rst become inactive before continuing to execute
   tube_wait_for_rst_release();
 
-  // Enable interrupts!
-  _enable_interrupts();
-
   // Reset ARM performance counters
   tube_reset_performance_counters();
 
   // Send reset message
   tube_Reset();
 
+  // Re-enable the language transfer
+  set_ignore_transfer(0);
+
+  // Always copy ARM Basic into memory (in case it's been corrupted)
+  copy_armbasic();
+
   // When the default exit handler is called, we return here
   setjmp(enterOS);
+
+  // Make sure interrupts are enabled!
+  _enable_interrupts();
+
+  // Read the last break type
+  OS_Byte(0xfd, 0x00, 0xFF, &last_break, NULL);
+
+  // If hard or power up break, then don't re-enter ARM Basic
+  if ((last_break & 0xff) > 0) {
+     armbasic = 0;
+  }
+
+  // Re-start ARMBASIC if active before reset
+  if (armbasic) {
+     OS_CLI("ARMBASIC");
+  }
 
   // Make sure the reentrant interrupt flag is clear
 #ifdef USE_REENTRANT_FIQ_HANDLER

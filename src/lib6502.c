@@ -1,7 +1,7 @@
 /* lib6502.c -- MOS Technology 6502 emulator	-*- C -*- */
 
 /* Copyright (c) 2005 Ian Piumarta
- * 
+ *
  * All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -18,7 +18,7 @@
  */
 
 /* Last edited: 2013-06-07 23:03:39 by piumarta on emilia.local
- * 
+ *
  * BUGS:
  *   - RTS and RTI do not check the return address for a callback
  *   - the disassembler cannot be configured to read two bytes for BRK
@@ -27,12 +27,17 @@
  *   - emulator+disassembler in same object file (library is kind of pointless)
  */
 
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
 #define notick
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "lib6502.h"
+static void   M6502_dump(M6502 *mpu, char buffer[124]);
 
 #ifdef INCLUDE_DEBUGGER
 #include "lib6502_debug.h"
@@ -42,16 +47,17 @@ extern volatile int tube_irq;
 
 typedef uint8_t  byte;
 typedef uint16_t word;
+typedef uint32_t dword;
 
 enum {
-  flagN= (1<<7),	/* negative 	 */
-  flagV= (1<<6),	/* overflow 	 */
-  flagX= (1<<5),	/* unused   	 */
-  flagB= (1<<4),	/* irq from brk  */
-  flagD= (1<<3),	/* decimal mode  */
-  flagI= (1<<2),	/* irq disable   */
-  flagZ= (1<<1),	/* zero          */
-  flagC= (1<<0)		/* carry         */
+  flagN= (1u<<7),	/* negative 	 */
+  flagV= (1u<<6),	/* overflow 	 */
+  flagX= (1u<<5),	/* unused   	 */
+  flagB= (1u<<4),	/* irq from brk  */
+  flagD= (1u<<3),	/* decimal mode  */
+  flagI= (1u<<2),	/* irq disable   */
+  flagZ= (1u<<1),	/* zero          */
+  flagC= (1u<<0)		/* carry         */
 };
 
 #define getN()	(P & flagN)
@@ -61,35 +67,36 @@ enum {
 #define getZ()	(P & flagZ)
 #define getC()	(P & flagC)
 
-#define setNVZC(N,V,Z,C)	(P= (P & ~(flagN | flagV | flagZ | flagC)) | (N) | ((V)<<6) | ((Z)<<1) | (C))
-#define setNZC(N,Z,C)		(P= (P & ~(flagN |         flagZ | flagC)) | (N) |            ((Z)<<1) | (C))
-#define setNZ(N,Z)		(P= (P & ~(flagN |         flagZ        )) | (N) |            ((Z)<<1)      )
-#define setZ(Z)			(P= (P & ~(                flagZ        )) |                  ((Z)<<1)      )
-#define setC(C)			(P= (P & ~(                        flagC)) |                             (C))
-
+#define setNVZC(N,V,Z,C)   (P= (byte)((P & (byte)~(flagN | flagV | flagZ | flagC)) | (N) | ((V)?flagV:0) | ((Z)?flagZ:0) | ((C)?flagC:0)))
+#define setNZC(N,Z,C)      (P= (byte)((P & (byte)~(flagN |         flagZ | flagC)) | (N) |                 ((Z)?flagZ:0) | ((C)?flagC:0)))
+#define setNZ(N,Z)         (P= (byte)((P & (byte)~(flagN |         flagZ        )) | (N) |                 ((Z)?flagZ:0)                ))
+#define setZ(Z)            (P= (byte)((P & (byte)~(                flagZ        )) |                       ((Z)?flagZ:0)                ))
+#define setC(C)            (P= (byte)((P & (byte)~(                        flagC)) |                                       ((C)?flagC:0)))
 #define NAND(P, Q)	(!((P) & (Q)))
 
 static int elapsed;
 
 #ifdef notick
-#define tick(n)    
-#define tickIf(p) 
+#define tick(n)
+#define tickIf(p)
 #else
 #define tick(n)    elapsed+=n
-#define tickIf(p)  elapsed +=(p)?1:0 
+#define tickIf(p)  elapsed +=(p)?1:0
 #endif
 /* memory access (indirect if callback installed) -- ARGUMENTS ARE EVALUATED MORE THAN ONCE! */
 
 #ifdef USE_MEMORY_POINTER
 #define MEM(addr) memory[addr]
 #else
-#define MEM(addr) *(unsigned char *)(( int)addr ) 
+#define MEM(addr) *(unsigned char *)(( int)addr )
 #endif
 
+#define getword(addr)   ((uint16_t)((MEM(addr) + (MEM((addr + 1)    ) << 8))))
+#define getwordzp(addr) ((uint16_t)((MEM(addr) + (MEM((addr + 1) &0xff) << 8))))
 
 #ifdef INCLUDE_DEBUGGER
 
-byte tmpr;
+static byte tmpr;
 
 #define putMemory(ADDR, BYTE)                   \
   if (lib6502_debug_enabled) {                  \
@@ -102,7 +109,7 @@ byte tmpr;
       : (MEM(ADDR)= BYTE) )
 
 #define getMemory(ADDR)				\
-  tmpr = ( readCallback[ADDR]			\
+  tmpr = (byte)( readCallback[ADDR]			\
     ?  readCallback[ADDR](mpu, ADDR, 0)	        \
     :  MEM(ADDR) ) ;				\
   if (lib6502_debug_enabled) {                  \
@@ -120,18 +127,18 @@ byte tmpr;
 
 #else
 
-   
+
 #define putMemory(ADDR, BYTE)			\
   ( writeCallback[ADDR]				\
       ? writeCallback[ADDR](mpu, ADDR, BYTE)	\
       : (MEM(ADDR)= BYTE) )
 
 #define getMemory(ADDR)				\
-  ( readCallback[ADDR]				\
+  ((uint8_t)( readCallback[ADDR]				\
       ?  readCallback[ADDR](mpu, ADDR, 0)	\
-      :  MEM(ADDR) )
+      :  MEM(ADDR) ))
 
- 
+
 #define trap(ADDR, n)
 
 #endif
@@ -152,7 +159,7 @@ byte tmpr;
 
 #define abs(ticks)				\
   tick(ticks);					\
-  ea= MEM(PC) + (MEM(PC + 1) << 8);	        \
+  ea= getword(PC); \
   PC += 2;
 
 #define relative(ticks)				\
@@ -171,24 +178,44 @@ byte tmpr;
   tick(ticks);					\
   {						\
     word tmp;					\
-    tmp= MEM(PC)  + (MEM(PC  + 1) << 8);	\
-    ea = MEM(tmp) + (MEM(tmp + 1) << 8);	\
+    tmp= getword(PC);	\
+    ea = getword(tmp);	\
     PC += 2;					\
   }
 
+#ifdef TURBO
+
 #define absx(ticks)						\
   tick(ticks);							\
-  ea= MEM(PC) + (MEM(PC + 1) << 8);			        \
+  ea= getword(PC);			        \
+  PC += 2;							\
+  tickIf((ticks == 4) && ((ea >> 8) != ((ea + X) >> 8)));	\
+  ea = (ea + X) & 0xFFFF;
+
+#define absy(ticks)						\
+  tick(ticks);							\
+  ea= getword(PC);			        \
+  PC += 2;							\
+  tickIf((ticks == 4) && ((ea >> 8) != ((ea + Y) >> 8)));	\
+  ea = (ea + Y) & 0xFFFF
+
+#else
+
+#define absx(ticks)						\
+  tick(ticks);							\
+  ea= getword(PC);			        \
   PC += 2;							\
   tickIf((ticks == 4) && ((ea >> 8) != ((ea + X) >> 8)));	\
   ea += X;
 
 #define absy(ticks)						\
   tick(ticks);							\
-  ea= MEM(PC) + (MEM(PC + 1) << 8);			        \
+  ea= getword(PC);			        \
   PC += 2;							\
   tickIf((ticks == 4) && ((ea >> 8) != ((ea + Y) >> 8)));	\
   ea += Y
+
+#endif
 
 #define zp(ticks)				\
   tick(ticks);					\
@@ -208,25 +235,58 @@ byte tmpr;
   tick(ticks);					\
   {						\
     byte tmp= MEM(PC++) + X;			\
-    ea= MEM(tmp) + (MEM((tmp + 1)&0xFF) << 8);	\
+    ea= getwordzp(tmp);	\
   }
+
+#ifdef TURBO
 
 #define indy(ticks)						\
   tick(ticks);							\
   {								\
     byte tmp= MEM(PC++);					\
-    ea= MEM(tmp) + (MEM((tmp + 1)&0xFF) << 8);			\
+    ea= getwordzp(tmp);			\
+    tickIf((ticks == 5) && ((ea >> 8) != ((ea + Y) >> 8)));	\
+    ea = (ea + Y) & 0xFFFF;                                     \
+    if (turbo) {						\
+      ea += ((MEM(((tmp + 1)&0xFF)+0x300)&0x03) << 16);		\
+    }								\
+  }
+
+#else
+
+#define indy(ticks)						\
+  tick(ticks);							\
+  {								\
+    byte tmp= MEM(PC++);					\
+    ea= getwordzp(tmp);			\
     tickIf((ticks == 5) && ((ea >> 8) != ((ea + Y) >> 8)));	\
     ea += Y;							\
   }
+
+#endif
 
 #define indabsx(ticks)					\
   tick(ticks);						\
   {							\
     word tmp;						\
-    tmp= MEM(PC ) + (MEM(PC  + 1) << 8) + X;            \
-    ea = MEM(tmp) + (MEM(tmp + 1) << 8);		\
+    tmp= getword(PC) + X;            \
+    ea = getword(tmp);		\
   }
+
+#ifdef TURBO
+
+#define indzp(ticks)                \
+  tick(ticks);						\
+  {							\
+    byte tmp;						\
+    tmp= MEM(PC++);					\
+    ea = getwordzp(tmp);		\
+    if (turbo) {						\
+      ea += ((MEM(((tmp + 1)&0xFF)+0x300)&0x03) << 16);		\
+    }								\
+  }
+
+#else
 
 #define indzp(ticks)					\
   tick(ticks);						\
@@ -235,6 +295,8 @@ byte tmpr;
     tmp= MEM(PC++);					\
     ea = MEM(tmp) + (MEM((tmp + 1)&0xFF) << 8);		\
   }
+
+#endif
 
 /* insns */
 
@@ -247,7 +309,7 @@ byte tmpr;
 	int c= A + B + getC();								\
 	int v= (int8_t)A + (int8_t)B + getC();						\
 	fetch();									\
-	A= c;										\
+	A= (uint8_t)c;										\
 	setNVZC((A & 0x80), (((A & 0x80) > 0) ^ (v < 0)), (A == 0), ((c & 0x100) > 0));	\
 	next();										\
       }											\
@@ -263,7 +325,7 @@ byte tmpr;
 	v= (t < -128) || (t > 127);							\
 	if (s >= 0xA0) { s += 0x60; }							\
         fetch();									\
-	A= s;										\
+	A= (uint8_t)s;										\
 	/* only C is valid on NMOS 6502 */						\
 	setNVZC(s & 0x80, v, !A, (s >= 0x100));						\
 	tick(1);									\
@@ -281,7 +343,7 @@ byte tmpr;
 	int c= A - B - b;								\
 	int v= (int8_t)A - (int8_t) B - b;						\
 	fetch();									\
-	A= c;										\
+	A= (uint8_t)c;										\
 	setNVZC(A & 0x80, ((A & 0x80) > 0) ^ ((v & 0x100) != 0), A == 0, c >= 0);	\
 	next();										\
       }											\
@@ -296,7 +358,7 @@ byte tmpr;
       	if (s < 0) { s -= 0x60; } 							\
 	if (l < 0) { s -= 0x06; }							\
 	fetch(); 									\
-	A = s;										\
+	A = (uint8_t)s;										\
 	/* only C is valid on NMOS 6502 */						\
 	setNVZC(s & 0x80, ((v & 0x80) > 0) ^ ((v & 0x100) != 0), !A, c);		\
 	tick(1);									\
@@ -367,8 +429,8 @@ byte tmpr;
   fetch();					\
   {						\
     byte B= getMemory(ea);			\
-    P= (P & ~(flagN | flagV | flagZ))		\
-      | (B & (0xC0)) | (((A & B) == 0) << 1);	\
+    P= (byte)((P & ~(flagN | flagV | flagZ))		\
+      | (B & (0xC0)) | (((A & B) == 0) << 1));	\
   }						\
   next();
 
@@ -377,8 +439,8 @@ byte tmpr;
   fetch();					\
   {						\
     byte B= getMemory(ea);			\
-    P= (P & ~flagZ)		                \
-      | (((A & B) == 0) << 1);	                \
+    P= (byte)((P & ~flagZ)		                \
+      | (((A & B) == 0) << 1));	                \
   }						\
   next();
 
@@ -418,7 +480,7 @@ byte tmpr;
   fetch();					\
   {						\
     byte b= getMemory(ea);			\
-    b &= ~mask;					\
+    b &= (byte)~mask;					\
     putMemory(ea, b);				\
   }						\
   next();
@@ -458,9 +520,9 @@ byte tmpr;
   {						\
     byte B= getMemory(ea);                      \
     unsigned int i= B << 1;                     \
-    putMemory(ea, i);				\
+    putMemory(ea, (uint8_t)i);				\
     fetch();					\
-    setNZC(i & 0x80, !i, i >> 8);		\
+    setNZC(i & 0x80, !(i & 0xFF), i >> 8);      \
   }						\
   next();
 
@@ -500,9 +562,9 @@ byte tmpr;
   adrmode(ticks);				\
   {						\
     byte tmp = getMemory(ea);                   \
-    word b= (tmp << 1) | getC();                \
+    word b= (word)((tmp << 1) | getC());                \
     fetch();					\
-    putMemory(ea, b);				\
+    putMemory(ea, (byte)b);				\
     setNZC(b & 0x80, !(b & 0xFF), b >> 8);	\
   }						\
   next();
@@ -511,8 +573,8 @@ byte tmpr;
   tick(ticks);					\
   fetch();					\
   {						\
-    word b= (A << 1) | getC();			\
-    A= b;					\
+    word b= (word)((A << 1) | getC());			\
+    A= (byte)b;					\
     setNZC(A & 0x80, !A, b >> 8);		\
   }						\
   next();
@@ -522,7 +584,7 @@ byte tmpr;
   {						\
     int  c= getC();				\
     byte m= getMemory(ea);			\
-    byte b= (c << 7) | (m >> 1);		\
+    byte b= (byte)((c << 7) | (m >> 1));		\
     fetch();					\
     putMemory(ea, b);				\
     setNZC(b & 0x80, !b, m & 1);		\
@@ -535,7 +597,7 @@ byte tmpr;
     int ci= getC();				\
     int co= A & 1;				\
     fetch();					\
-    A= (ci << 7) | (A >> 1);			\
+    A= (byte)((ci << 7) | (A >> 1));			\
     setNZC(A & 0x80, !A, co);			\
   }						\
   next();
@@ -585,7 +647,7 @@ byte tmpr;
   if (cond)					\
     {						\
       adrmode(ticks);				\
-      PC += ea;					\
+      PC += (word)ea;					\
       tick(1);					\
     }						\
   else						\
@@ -607,7 +669,7 @@ byte tmpr;
 
 #define bra(ticks, adrmode)			\
   adrmode(ticks);				\
-  PC += ea;					\
+  PC += (word)ea;					\
   fetch();					\
   tick(1);					\
   next();
@@ -632,12 +694,12 @@ byte tmpr;
 
 #define jmp(ticks, adrmode)				\
   adrmode(ticks);					\
-  PC= ea;						\
+  PC= (word)ea;						\
   if (mpu->callbacks->call[ea])				\
     {							\
       word addr;					\
       externalise();					\
-      if ((addr= mpu->callbacks->call[ea](mpu, ea, 0)))	\
+      if ((addr= (word)mpu->callbacks->call[ea](mpu, ea, 0)))	\
 	{						\
 	  internalise();				\
 	  PC= addr;					\
@@ -648,15 +710,15 @@ byte tmpr;
 
 #define jsr(ticks, adrmode)				\
   PC++;							\
-  push(PC >> 8);					\
-  push(PC & 0xff);					\
+  push((byte)(PC >> 8));					\
+  push((byte) PC );					\
   PC--;							\
   adrmode(ticks);					\
   if (mpu->callbacks->call[ea])				\
     {							\
       word addr;					\
       externalise();					\
-      if ((addr= mpu->callbacks->call[ea](mpu, ea, 0)))	\
+      if ((addr= (word)mpu->callbacks->call[ea](mpu, ea, 0)))	\
 	{						\
 	  internalise();				\
 	  PC= addr;					\
@@ -664,14 +726,14 @@ byte tmpr;
 	  next();					\
 	}						\
     }							\
-  PC=ea;						\
+  PC=(word)ea;						\
   fetch();						\
   next();
 
 #define rts(ticks, adrmode)			\
   tick(ticks);					\
-  PC  =  pop();					\
-  PC |= (pop() << 8);				\
+  PC  = (word) pop();					\
+  PC |= (word) ((pop() << 8));				\
   PC++;						\
   fetch();					\
   next();
@@ -680,20 +742,20 @@ byte tmpr;
   tick(ticks);							\
   trap(PC - 1, 0)                                               \
   PC++;								\
-  push(PC >> 8);						\
-  push(PC & 0xff);						\
+  push((byte)(PC >> 8));						\
+  push((byte) PC);						\
   push(P | flagB | flagX);					\
   P |= flagI;							\
-  P &= ~flagD;							\
+  P &= (byte)~flagD;							\
   {								\
     byte blo = getMemory(0xfffe);                               \
     byte bhi = getMemory(0xffff);                               \
-    word hdlr= blo + (bhi << 8);                                \
+    word hdlr= (word)(blo + (bhi << 8));                                \
     if (mpu->callbacks->call[hdlr])				\
       {								\
 	word addr;						\
 	externalise();						\
-	if ((addr= mpu->callbacks->call[hdlr](mpu, PC - 2, 0)))	\
+	if ((addr= (word)mpu->callbacks->call[hdlr](mpu, PC - 2, 0)))	\
 	  {							\
 	    internalise();					\
 	    hdlr= addr;						\
@@ -708,7 +770,7 @@ byte tmpr;
   tick(ticks);					\
   P=     pop();					\
   PC=    pop();					\
-  PC |= (pop() << 8);				\
+  PC |= (word)((pop() << 8));				\
   fetch();					\
   next();
 
@@ -756,7 +818,7 @@ byte tmpr;
 #define clF(ticks, adrmode, F)			\
   fetch();					\
   tick(ticks);					\
-  P &= ~F;					\
+  P &= (byte)~F;					\
   next();
 
 #define clc(ticks, adrmode)	clF(ticks, adrmode, flagC)
@@ -848,10 +910,10 @@ void M6502_irq(M6502 *mpu)
     {
       mpu->memory[0x0100 + mpu->registers->s--] = (byte)(mpu->registers->pc >> 8);
       mpu->memory[0x0100 + mpu->registers->s--] = (byte)(mpu->registers->pc & 0xff);
-      mpu->memory[0x0100 + mpu->registers->s--] = (mpu->registers->p & ~flagB) | flagX;
+      mpu->memory[0x0100 + mpu->registers->s--] = (byte)((mpu->registers->p & ~flagB) | flagX);
       mpu->registers->p |=  flagI;
-      mpu->registers->p &= ~flagD;
-      mpu->registers->pc = M6502_getVector(mpu, IRQ);
+      mpu->registers->p &= (byte)~flagD;
+      mpu->registers->pc = (word)M6502_getVector(mpu, IRQ);
     }
 }
 
@@ -860,18 +922,18 @@ void M6502_nmi(M6502 *mpu)
 {
   mpu->memory[0x0100 + mpu->registers->s--] = (byte)(mpu->registers->pc >> 8);
   mpu->memory[0x0100 + mpu->registers->s--] = (byte)(mpu->registers->pc & 0xff);
-  mpu->memory[0x0100 + mpu->registers->s--] = (mpu->registers->p & ~flagB) | flagX;
+  mpu->memory[0x0100 + mpu->registers->s--] = (byte)((mpu->registers->p & ~flagB) | flagX);
   mpu->registers->p |=  flagI;
-  mpu->registers->p &= ~flagD;
-  mpu->registers->pc = M6502_getVector(mpu, NMI);
+  mpu->registers->p &= (byte)~flagD;
+  mpu->registers->pc = (word)M6502_getVector(mpu, NMI);
 }
 
 
 void M6502_reset(M6502 *mpu)
 {
-  mpu->registers->p &= ~flagD;
+  mpu->registers->p &= (byte)~flagD;
   mpu->registers->p |=  flagI;
-  mpu->registers->pc = M6502_getVector(mpu, RST);
+  mpu->registers->pc = (word)M6502_getVector(mpu, RST);
 }
 
 
@@ -886,12 +948,11 @@ static int previousPC;
 
 void M6502_trace(M6502 *mpu)
 {
-  char state[124];
-
   if(elapsed > 40123000){
-  M6502_dump(mpu, state);
-  fflush(stdout);
-  fprintf(stderr, "Trace: %s\n", state);
+      char state[124];
+      M6502_dump(mpu, state);
+      fflush(stdout);
+      fprintf(stderr, "Trace: %s\n", state);
   }
 
   if (mpu->registers->pc == previousPC){
@@ -934,7 +995,7 @@ void M6502_run(M6502 *mpu, M6502_PollInterruptsCallback poll)
 
 # define pollints()        if (tube_irq & 7) { externalise(); if (poll(mpu)) return; internalise(); }
 # define begin()				fetch();  next()
-# define fetch()				
+# define fetch()
 # define next()            debug(); pollints(); tpc= itabp[MEM(PC++)]; goto *tpc
 # define dispatch(num, name, mode, cycles)	_##num: name(cycles, mode) //oops();  next()
 # define end()
@@ -943,16 +1004,21 @@ void M6502_run(M6502 *mpu, M6502_PollInterruptsCallback poll)
 
 # define begin()				for (;;) switch (MEM(PC++)) {
 # define fetch()
-# define next()					break
-# define dispatch(num, name, mode, cycles)	case 0x##num: name(cycles, mode);  next()
+# define next()
+# define dispatch(num, name, mode, cycles)	case 0x##num: name(cycles, mode); break;
 # define end()					}
 
 #endif
 #ifdef USE_MEMORY_POINTER
   register byte  *memory= mpu->memory;
-#endif  
+#endif
   register word   PC;
+#ifdef TURBO
+  dword		  ea;
+  extern uint8_t turbo;
+#else
   word		  ea;
+#endif
   byte		  A, X, Y, P, S;
   M6502_Callback *readCallback=  mpu->callbacks->read;
   M6502_Callback *writeCallback= mpu->callbacks->write;
@@ -1010,7 +1076,7 @@ int M6502_disassemble(M6502 *mpu, word ip, char buffer[64])
   return 0;
 }
 
-void M6502_dump(M6502 *mpu, char buffer[124])
+static void M6502_dump(M6502 *mpu, char buffer[124])
 {
   M6502_Registers *r= mpu->registers;
   uint8_t p= r->p;
@@ -1039,15 +1105,23 @@ M6502 *M6502_new(M6502_Registers *registers, M6502_Memory memory, M6502_Callback
   if (!mpu) {outOfMemory(); return NULL;}
 
   if (!registers)  { registers = (M6502_Registers *)calloc(1, sizeof(M6502_Registers));  mpu->flags |= M6502_RegistersAllocated; }
+  if (!registers) outOfMemory();
 #ifdef USE_MEMORY_POINTER
   if (!memory   )  { memory    = (uint8_t         *)calloc(1, sizeof(M6502_Memory   ));  mpu->flags |= M6502_MemoryAllocated;    }
   if (!memory) outOfMemory();
-#else
-   { memory    = 0;    }
-#endif    
   if (!callbacks)  { callbacks = (M6502_Callbacks *)calloc(1, sizeof(M6502_Callbacks));  mpu->flags |= M6502_CallbacksAllocated; }
-
-  if (!registers || !callbacks) outOfMemory();
+  if (!callbacks) outOfMemory();
+#else
+   {
+      memory    = 0;
+      callbacks = (M6502_Callbacks *)0x00100000; // + 1MB
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+      memset(callbacks, 0, sizeof(M6502_Callbacks));
+#pragma GCC diagnostic pop
+   }
+#endif
 
   mpu->registers = registers;
   mpu->memory    = memory;
@@ -1065,3 +1139,5 @@ void M6502_delete(M6502 *mpu)
 
   free(mpu);
 }
+
+#pragma GCC diagnostic pop
